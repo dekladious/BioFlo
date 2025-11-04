@@ -1,55 +1,32 @@
 import Stripe from "stripe";
-import { currentUser } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 
 export async function POST() {
-  try {
-    const user = await currentUser();
-    const userId = user?.id;
-    
-    if (!userId) {
-      console.error("No user found - user:", user);
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  const { userId } = await auth();
+  if (!userId) return new Response("Unauthorized", { status: 401 });
 
-    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-    const priceId = process.env.STRIPE_PRICE_ID;
-    const baseUrl = process.env.APP_BASE_URL;
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress;
 
-    if (!stripeSecretKey) {
-      console.error("STRIPE_SECRET_KEY is missing");
-      return Response.json({ error: "Stripe configuration error" }, { status: 500 });
-    }
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" as any });
+  const priceId = process.env.STRIPE_PRICE_ID!;
+  const baseUrl = process.env.APP_BASE_URL!;
 
-    if (!priceId) {
-      console.error("STRIPE_PRICE_ID is missing");
-      return Response.json({ error: "Stripe price configuration error" }, { status: 500 });
-    }
+  // Create or reuse a Customer by email; attach clerkUserId in metadata
+  const customers = await stripe.customers.list({ email, limit: 1 });
+  const existing = customers.data[0];
+  const customer = existing
+    ? await stripe.customers.update(existing.id, { metadata: { clerkUserId: userId } })
+    : await stripe.customers.create({ email: email || undefined, metadata: { clerkUserId: userId } });
 
-    if (!baseUrl) {
-      console.error("APP_BASE_URL is missing");
-      return Response.json({ error: "Application configuration error" }, { status: 500 });
-    }
+  const session = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    payment_method_types: ["card"],
+    line_items: [{ price: priceId, quantity: 1 }],
+    success_url: `${baseUrl}/chat?checkout=success`,
+    cancel_url: `${baseUrl}/subscribe`,
+    customer: customer.id,
+  });
 
-    const stripe = new Stripe(stripeSecretKey, { apiVersion: "2024-06-20" as any });
-
-    // For subscription mode, customer is automatically created by Stripe
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${baseUrl}/chat?checkout=success`,
-      cancel_url: `${baseUrl}/subscribe`,
-      metadata: { clerkUserId: userId },
-    });
-
-    if (!session.url) {
-      console.error("Stripe session created but no URL returned");
-      return Response.json({ error: "Failed to create checkout session" }, { status: 500 });
-    }
-
-    return Response.json({ url: session.url });
-  } catch (error: any) {
-    console.error("Checkout route error:", error);
-    return Response.json({ error: error.message || "Internal server error" }, { status: 500 });
-  }
+  return Response.json({ url: session.url });
 }
