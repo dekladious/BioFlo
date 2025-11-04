@@ -12,7 +12,6 @@ export async function POST() {
   const priceId = process.env.STRIPE_PRICE_ID!;
   const baseUrl = process.env.APP_BASE_URL!;
 
-  // Create or reuse a Customer by email; attach clerkUserId in metadata
   const customers = await stripe.customers.list({ email, limit: 1 });
   const existing = customers.data[0];
   const customer = existing

@@ -60,7 +60,6 @@ export async function POST(req: Request) {
         break;
       }
       default:
-        // ignore other events
         break;
     }
     return new Response("ok", { status: 200 });
