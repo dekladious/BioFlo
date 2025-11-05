@@ -1,11 +1,37 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 type Msg = { role: "user" | "assistant"; content: string };
 
 export default function ChatInterface() {
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>(() => {
+    // Load from localStorage on mount
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("bioflo-chat-messages");
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("bioflo-chat-messages", JSON.stringify(messages));
+    }
+  }, [messages]);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   async function send() {
     if (!input.trim() || loading) return;
@@ -25,7 +51,9 @@ export default function ChatInterface() {
         throw new Error(data.error || `HTTP error! status: ${res.status}`);
       }
       
-      setMessages([...next, { role: "assistant", content: data.text ?? "No response" } as Msg]);
+      // Handle both old and new response formats
+      const text = data.data?.text || data.text || "No response";
+      setMessages([...next, { role: "assistant", content: text } as Msg]);
     } catch (err: any) {
       console.error("Chat error:", err);
       setMessages([...next, { role: "assistant", content: `Error: ${err.message || "Failed to get response. Please try again."}` } as Msg]);
@@ -50,6 +78,7 @@ export default function ChatInterface() {
           </div>
         ))}
         {loading && <div className="text-sm text-slate-500">Thinking…</div>}
+        <div ref={messagesEndRef} />
       </div>
 
       <div className="flex gap-2">

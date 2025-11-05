@@ -1,6 +1,7 @@
 import "./globals.css";
 import { ClerkProvider, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export const metadata = {
   title: "BioFlo",
@@ -12,6 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <ClerkProvider>
       <html lang="en">
         <body className="bg-white text-slate-900">
+          <ErrorBoundary>
           <header className="border-b">
             <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
               <Link href="/" className="font-semibold">BioFlo</Link>
@@ -28,6 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </header>
           <main className="max-w-4xl mx-auto px-4 py-6">{children}</main>
+          </ErrorBoundary>
         </body>
       </html>
     </ClerkProvider>

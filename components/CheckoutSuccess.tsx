@@ -6,7 +6,7 @@ export default function CheckoutSuccess() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let retryCount = 0;
+    const retryCountRef = { current: 0 };
     const maxRetries = 15; // Try for 30 seconds (15 * 2s)
 
     const checkStatus = async () => {
@@ -18,15 +18,18 @@ export default function CheckoutSuccess() {
           throw new Error(data.error || `HTTP error! status: ${res.status}`);
         }
         
-        if (data.isPro) {
+        // Handle both old and new response formats
+        const isPro = data.data?.isPro ?? data.isPro;
+        
+        if (isPro) {
           setStatus("success");
           // Redirect to chat after a moment
           setTimeout(() => {
             window.location.href = "/chat";
           }, 2000);
         } else {
-          retryCount++;
-          if (retryCount >= maxRetries) {
+          retryCountRef.current++;
+          if (retryCountRef.current >= maxRetries) {
             setStatus("error");
             setError("Subscription activation is taking longer than expected. Please refresh the page or contact support.");
           } else {
@@ -36,8 +39,8 @@ export default function CheckoutSuccess() {
         }
       } catch (error: any) {
         console.error("Status check error:", error);
-        retryCount++;
-        if (retryCount >= maxRetries) {
+        retryCountRef.current++;
+        if (retryCountRef.current >= maxRetries) {
           setStatus("error");
           setError(error.message || "Failed to check subscription status. Please refresh the page.");
         } else {
@@ -61,7 +64,7 @@ export default function CheckoutSuccess() {
       clearTimeout(timer);
       clearTimeout(refreshTimer);
     };
-  }, [status]);
+  }, []); // Empty deps - only run once on mount
 
   if (status === "success") {
     return (

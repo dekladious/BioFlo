@@ -1,6 +1,7 @@
 import { currentUser } from "@clerk/nextjs/server";
 import ChatInterface from "@/components/ChatInterface";
 import CheckoutSuccess from "@/components/CheckoutSuccess";
+import { ClerkPublicMetadata } from "@/types";
 
 export default async function ChatPage({
   searchParams,
@@ -9,7 +10,7 @@ export default async function ChatPage({
 }) {
   // Middleware already ensures user is authenticated
   const user = await currentUser();
-  const isPro = Boolean((user?.publicMetadata as any)?.isPro);
+  const isPro = Boolean((user?.publicMetadata as ClerkPublicMetadata)?.isPro);
   const params = await searchParams;
   const isCheckoutSuccess = params?.checkout === "success";
 

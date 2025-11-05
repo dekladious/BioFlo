@@ -1,21 +1,24 @@
 import Stripe from "stripe";
 import { currentUser, clerkClient } from "@clerk/nextjs/server";
+import { logger } from "@/lib/logger";
+import { env } from "@/lib/env";
+import { STRIPE as STRIPE_CONST } from "@/lib/constants";
+import { ClerkPublicMetadata, ClerkPrivateMetadata } from "@/types";
+import { getRequestMetadata, createErrorResponse } from "@/lib/api-utils";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { requestId } = getRequestMetadata(req);
+  
   try {
     const user = await currentUser();
     if (!user?.id) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+      logger.warn("Check-status: Unauthorized request", { requestId });
+      return createErrorResponse("Unauthorized", requestId, 401);
     }
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      console.error("STRIPE_SECRET_KEY is missing");
-      return Response.json({ error: "Stripe configuration error" }, { status: 500 });
-    }
-
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" as any });
+    const stripe = new Stripe(env.stripe.secretKey(), { apiVersion: STRIPE_CONST.API_VERSION as any });
     const clerk = await clerkClient();
-    let customerId = (user.privateMetadata as any)?.stripeCustomerId as string | undefined;
+    let customerId = (user.privateMetadata as ClerkPrivateMetadata)?.stripeCustomerId;
     let hasActiveSubscription = false;
     let subscription: Stripe.Subscription | null = null;
 
@@ -29,8 +32,8 @@ export async function GET() {
         });
         hasActiveSubscription = subscriptions.data.length > 0;
         subscription = subscriptions.data[0] || null;
-      } catch (err: any) {
-        console.error("Error checking subscriptions by customerId:", err.message);
+      } catch (err: unknown) {
+        logger.error("Error checking subscriptions by customerId", err, user.id);
         // Continue to try email lookup
       }
     }
@@ -72,55 +75,78 @@ export async function GET() {
           if (customerId) {
             try {
               await clerk.users.updateUser(user.id, {
-                privateMetadata: { ...((user.privateMetadata as any) || {}), stripeCustomerId: customerId },
+                privateMetadata: { ...((user.privateMetadata as ClerkPrivateMetadata) || {}), stripeCustomerId: customerId } as ClerkPrivateMetadata,
               });
-            } catch (err: any) {
-              console.error("Error updating Clerk user metadata:", err.message);
+            } catch (err: unknown) {
+              logger.error("Error updating Clerk user metadata", err, user.id);
             }
           }
         }
-      } catch (err: any) {
-        console.error("Error searching by email:", err.message);
+      } catch (err: unknown) {
+        logger.error("Error searching by email", err, user.id);
       }
     }
 
-    const currentIsPro = Boolean((user.publicMetadata as any)?.isPro);
+    const currentIsPro = Boolean((user.publicMetadata as ClerkPublicMetadata)?.isPro);
 
     // Update Clerk if status doesn't match
     if (hasActiveSubscription && !currentIsPro) {
       try {
         await clerk.users.updateUser(user.id, {
-          publicMetadata: { ...((user.publicMetadata as any) || {}), isPro: true },
-          privateMetadata: { ...((user.privateMetadata as any) || {}), stripeCustomerId: customerId },
+          publicMetadata: { ...((user.publicMetadata as ClerkPublicMetadata) || {}), isPro: true } as ClerkPublicMetadata,
+          privateMetadata: { ...((user.privateMetadata as ClerkPrivateMetadata) || {}), stripeCustomerId: customerId } as ClerkPrivateMetadata,
         });
-        return Response.json({ 
-          isPro: true, 
-          message: "Subscription found! Pro status activated.",
-          wasUpdated: true,
-          customerId
-        });
-      } catch (err: any) {
-        console.error("Error updating Clerk user with Pro status:", err.message);
+        logger.info("Check-status: Pro status activated", { userId: user.id, customerId, wasUpdated: true });
+    return Response.json({ 
+      success: true,
+      data: {
+        isPro: true, 
+        message: "Subscription found! Pro status activated.",
+        wasUpdated: true,
+        customerId
+      },
+      requestId,
+      timestamp: new Date().toISOString(),
+    }, {
+      headers: {
+        "X-Request-Id": requestId,
+        "Content-Type": "application/json",
+      },
+    });
+      } catch (err: unknown) {
+        logger.error("Error updating Clerk user with Pro status", err, user.id);
+        const errorMessage = err instanceof Error ? err.message : "Unknown error";
         return Response.json({ 
           error: "Subscription found but failed to activate Pro status",
-          details: err.message 
+          details: errorMessage 
         }, { status: 500 });
       }
     }
 
     return Response.json({ 
-      isPro: hasActiveSubscription && currentIsPro,
-      hasActiveSubscription,
-      currentIsPro,
-      customerId,
-      subscriptionId: subscription?.id,
-      message: hasActiveSubscription ? "You have an active subscription" : "No active subscription found"
+      success: true,
+      data: {
+        isPro: hasActiveSubscription && currentIsPro,
+        hasActiveSubscription,
+        currentIsPro,
+        customerId,
+        subscriptionId: subscription?.id,
+        message: hasActiveSubscription ? "You have an active subscription" : "No active subscription found"
+      },
+      requestId,
+      timestamp: new Date().toISOString(),
+    }, {
+      headers: {
+        "X-Request-Id": requestId,
+        "Content-Type": "application/json",
+      },
     });
-  } catch (error: any) {
-    console.error("Check status error:", error);
-    return Response.json({ 
-      error: error.message || "Internal server error",
-      stack: process.env.NODE_ENV === "development" ? error.stack : undefined
-    }, { status: 500 });
+  } catch (error: unknown) {
+    logger.error("Check status error", error);
+    return createErrorResponse(
+      error instanceof Error ? error.message : "Internal server error",
+      requestId,
+      500
+    );
   }
 }
