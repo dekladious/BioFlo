@@ -1,22 +1,21 @@
-import OpenAI from "openai";
 import { auth, currentUser } from "@clerk/nextjs/server";
-import { CHAT } from "@/lib/constants";
+import { BIOFLO_SYSTEM_PROMPT } from "@/lib/ai/policy";
+import { runModel } from "@/lib/ai/modelRouter";
+import { detectToolFromUserText, getTool } from "@/lib/ai/tools";
+import { CHAT, RATE_LIMITS } from "@/lib/constants";
 import { logger } from "@/lib/logger";
 import { rateLimit, getRateLimitIdentifier } from "@/lib/rate-limit";
-import { env } from "@/lib/env";
 import { ClerkPublicMetadata } from "@/types";
 import { getRequestMetadata, validateContentType, withTimeout, createErrorResponse } from "@/lib/api-utils";
+import "@/lib/ai/tools/mealPlanner"; // ensure tool registers
 
 export const runtime = "nodejs";
 
 // Rate limiting: 20 requests per 5 minutes per user
-const RATE_LIMIT_CONFIG = {
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  maxRequests: 20,
-};
+const RATE_LIMIT_CONFIG = RATE_LIMITS.CHAT;
 
-// OpenAI API timeout (30 seconds)
-const OPENAI_TIMEOUT_MS = 30000;
+// AI API timeout (30 seconds)
+const AI_TIMEOUT_MS = 30000;
 
 export async function POST(req: Request) {
   const { ip, requestId } = getRequestMetadata(req);
@@ -35,6 +34,7 @@ export async function POST(req: Request) {
       return createErrorResponse("Request payload too large", requestId, 413);
     }
 
+    // Authentication
     const { userId } = await auth();
     if (!userId) {
       logger.warn("Chat API: Unauthorized request", { requestId, ip });
@@ -73,6 +73,7 @@ export async function POST(req: Request) {
       );
     }
     
+    // Paywall check
     const user = await currentUser();
     const isPro = Boolean((user?.publicMetadata as ClerkPublicMetadata)?.isPro);
     if (!isPro) {
@@ -80,6 +81,7 @@ export async function POST(req: Request) {
       return createErrorResponse("Subscription required", requestId, 402);
     }
 
+    // Parse and validate request body
     const body = await req.json();
     const { messages } = body;
     
@@ -109,34 +111,130 @@ export async function POST(req: Request) {
       }
     }
 
-    const openaiKey = env.openai.apiKey();
-    const client = new OpenAI({ 
-      apiKey: openaiKey,
-      timeout: OPENAI_TIMEOUT_MS,
-      maxRetries: 2,
-    });
-    
-    // Create completion with timeout
-    const completion = await withTimeout(
-      client.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          { role: "system", content: "You are BioFlo, a supportive, highly actionable biohacking coach. Be concise. Do not diagnose. Add: 'Educational only; not medical advice.' at the end." },
-          ...messages,
-        ],
-        temperature: 0.7,
-        max_tokens: 2000, // Limit response length
-      }),
-      OPENAI_TIMEOUT_MS,
-      "OpenAI API request timeout"
-    );
+    // Get last user message for tool detection and safety checks
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const userContent = lastUser?.content || "";
 
-    const text = completion.choices[0]?.message?.content || "Sorry, I couldn't generate a response.";
+    // Safety: Crisis keyword detection (server-side block)
+    const crisisPattern = /(suicide|kill myself|self-harm|hurt myself|end my life)/i;
+    if (crisisPattern.test(userContent)) {
+      logger.warn("Chat API: Crisis keywords detected", { userId, requestId });
+      const crisisMsg = "If you're in immediate danger, call your local emergency number now. You can also contact your local crisis line (e.g., 988 in the U.S.).";
+      return Response.json({ 
+        success: true,
+        data: { text: crisisMsg },
+        requestId,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Tool detection
+    const maybeTool = detectToolFromUserText(userContent);
+    if (maybeTool) {
+      const tool = getTool(maybeTool.name);
+      if (tool) {
+        logger.info("Chat API: Tool detected", { userId, toolName: tool.name, requestId });
+        
+        const parsed = tool.input.safeParse(maybeTool.args);
+        if (!parsed.success) {
+          logger.warn("Chat API: Tool input validation failed", { 
+            userId, 
+            toolName: tool.name, 
+            errors: parsed.error.errors,
+            requestId 
+          });
+          return Response.json({ 
+            success: true,
+            data: { 
+              text: "I couldn't parse your request for the meal plan. Try e.g., 'Plan a 2500 kcal pescatarian day (no nuts)'." 
+            },
+            requestId,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        try {
+          const result = await tool.handler(parsed.data);
+          
+          // Format enhanced meal plan response
+          const lines: string[] = [];
+          lines.push(`## 📋 Daily Meal Plan (${result.calories} kcal)`);
+          lines.push("");
+          lines.push(`**Macros:** Protein ${result.macros.protein}g (${result.macroPercentages?.protein || 30}%) · Carbs ${result.macros.carbs}g (${result.macroPercentages?.carbs || 40}%) · Fat ${result.macros.fat}g (${result.macroPercentages?.fat || 30}%)`);
+          lines.push("");
+          lines.push("---");
+          lines.push("");
+          
+          for (const m of result.plan) {
+            lines.push(`### ${m.name}${m.timing ? ` (${m.timing})` : ""}`);
+            lines.push(`**${m.kcal} kcal** | Protein: ${m.protein}g | Carbs: ${m.carbs}g | Fat: ${m.fat}g`);
+            lines.push("");
+            m.items.forEach(item => {
+              lines.push(`- ${item}`);
+            });
+            lines.push("");
+          }
+          
+          if (result.tips && Array.isArray(result.tips) && result.tips.length > 0) {
+            lines.push("---");
+            lines.push("");
+            lines.push("### 💡 Tips");
+            result.tips.forEach(tip => {
+              lines.push(`- ${tip}`);
+            });
+            lines.push("");
+          }
+          
+          lines.push("---");
+          lines.push("");
+          lines.push("_Educational only. Not medical advice._");
+
+          logger.info("Chat API: Tool executed successfully", { 
+            userId, 
+            toolName: tool.name, 
+            requestId 
+          });
+
+          return Response.json({ 
+            success: true,
+            data: { text: lines.join("\n") },
+            requestId,
+            timestamp: new Date().toISOString(),
+          }, {
+            headers: {
+              "X-RateLimit-Limit": String(RATE_LIMIT_CONFIG.maxRequests),
+              "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+              "X-RateLimit-Reset": String(rateLimitResult.resetAt),
+              "X-Request-Id": requestId,
+              "Content-Type": "application/json",
+            },
+          });
+        } catch (toolError: unknown) {
+          logger.error("Chat API: Tool execution failed", toolError, userId);
+          return createErrorResponse("Failed to generate meal plan. Please try again.", requestId, 500);
+        }
+      }
+    }
+
+    // Default: LLM response using model router
+    const text = await withTimeout(
+      runModel({
+        provider: (process.env.AI_PROVIDER as "openai" | "anthropic") || "openai",
+        system: BIOFLO_SYSTEM_PROMPT,
+        messages: messages.slice(-20).map(m => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+        timeout: AI_TIMEOUT_MS,
+        maxTokens: 2000,
+      }),
+      AI_TIMEOUT_MS,
+      "AI model request timeout"
+    );
     
     logger.info("Chat API: Request completed", { 
       userId, 
       messageCount: messages.length,
-      tokens: completion.usage?.total_tokens,
       requestId,
     });
     
@@ -155,7 +253,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (e: unknown) {
-    const authResult = await auth();
+    const authResult = await auth().catch(() => ({ userId: null }));
     const userId = authResult.userId;
     
     logger.error("Chat API error", e, userId);
@@ -164,6 +262,6 @@ export async function POST(req: Request) {
       ? e.message 
       : "An error occurred. Please try again.";
     
-    return createErrorResponse(errorMessage || "Server error", requestId, 500);
+    return createErrorResponse(errorMessage, requestId, 500);
   }
 }
