@@ -8,6 +8,8 @@ import { rateLimit, getRateLimitIdentifier } from "@/lib/rate-limit";
 import { ClerkPublicMetadata } from "@/types";
 import { getRequestMetadata, validateContentType, withTimeout, createErrorResponse } from "@/lib/api-utils";
 import "@/lib/ai/tools/mealPlanner"; // ensure tool registers
+import "@/lib/ai/tools/supplementRecommender"; // ensure tool registers
+import "@/lib/ai/tools/sleepOptimizer"; // ensure tool registers
 
 export const runtime = "nodejs";
 
@@ -156,38 +158,215 @@ export async function POST(req: Request) {
         try {
           const result = await tool.handler(parsed.data);
           
-          // Format enhanced meal plan response
+          // Format tool response based on tool type
           const lines: string[] = [];
-          lines.push(`## 📋 Daily Meal Plan (${result.calories} kcal)`);
-          lines.push("");
-          lines.push(`**Macros:** Protein ${result.macros.protein}g (${result.macroPercentages?.protein || 30}%) · Carbs ${result.macros.carbs}g (${result.macroPercentages?.carbs || 40}%) · Fat ${result.macros.fat}g (${result.macroPercentages?.fat || 30}%)`);
-          lines.push("");
-          lines.push("---");
-          lines.push("");
           
-          for (const m of result.plan) {
-            lines.push(`### ${m.name}${m.timing ? ` (${m.timing})` : ""}`);
-            lines.push(`**${m.kcal} kcal** | Protein: ${m.protein}g | Carbs: ${m.carbs}g | Fat: ${m.fat}g`);
+          if (tool.name === "mealPlanner") {
+            // Format meal plan response
+            lines.push(`## 📋 Daily Meal Plan (${result.calories} kcal)`);
             lines.push("");
-            m.items.forEach(item => {
-              lines.push(`- ${item}`);
-            });
+            lines.push(`**Macros:** Protein ${result.macros.protein}g (${result.macroPercentages?.protein || 30}%) · Carbs ${result.macros.carbs}g (${result.macroPercentages?.carbs || 40}%) · Fat ${result.macros.fat}g (${result.macroPercentages?.fat || 30}%)`);
             lines.push("");
-          }
-          
-          if (result.tips && Array.isArray(result.tips) && result.tips.length > 0) {
             lines.push("---");
             lines.push("");
-            lines.push("### 💡 Tips");
-            result.tips.forEach(tip => {
-              lines.push(`- ${tip}`);
-            });
+            
+            for (const m of result.plan) {
+              lines.push(`### ${m.name}${m.timing ? ` (${m.timing})` : ""}`);
+              lines.push(`**${m.kcal} kcal** | Protein: ${m.protein}g | Carbs: ${m.carbs}g | Fat: ${m.fat}g`);
+              lines.push("");
+              m.items.forEach(item => {
+                lines.push(`- ${item}`);
+              });
+              lines.push("");
+            }
+            
+            if (result.tips && Array.isArray(result.tips) && result.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Tips");
+              result.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "supplementRecommender") {
+            // Format supplement recommendation response
+            lines.push(`## 💊 Supplement Recommendations`);
             lines.push("");
+            lines.push(result.recommendations || `Based on your goals: **${result.goals?.join(", ")}**`);
+            lines.push("");
+            lines.push(`**Experience Level:** ${result.experience} | **Budget:** ${result.budget}`);
+            if (result.stack?.totalCost) {
+              lines.push(`**Estimated Cost:** ${result.stack.totalCost}`);
+            }
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            
+            // Supplement list
+            lines.push("### Recommended Supplements");
+            lines.push("");
+            result.stack?.supplements?.forEach((supp, idx) => {
+              lines.push(`**${idx + 1}. ${supp.name}**`);
+              lines.push(`- **Dosage:** ${supp.dosage}`);
+              lines.push(`- **Timing:** ${supp.timing}`);
+              lines.push(`- **Purpose:** ${supp.purpose}`);
+              if (supp.duration) lines.push(`- **Duration:** ${supp.duration}`);
+              if (supp.cost) lines.push(`- **Cost:** ${supp.cost}`);
+              if (supp.notes) lines.push(`- **Notes:** ${supp.notes}`);
+              lines.push("");
+            });
+            
+            // Timing schedule
+            if (result.stack?.timingSchedule && result.stack.timingSchedule.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ⏰ Timing Schedule");
+              lines.push("");
+              result.stack.timingSchedule.forEach(schedule => {
+                lines.push(`**${schedule.time}**`);
+                schedule.supplements.forEach(supp => {
+                  lines.push(`- ${supp}`);
+                });
+                if (schedule.notes) {
+                  lines.push(`  *${schedule.notes}*`);
+                }
+                lines.push("");
+              });
+            }
+            
+            // Interactions
+            if (result.stack?.interactions && result.stack.interactions.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ⚠️ Interactions to Consider");
+              lines.push("");
+              result.stack.interactions.forEach(interaction => {
+                lines.push(`- ${interaction}`);
+              });
+              lines.push("");
+            }
+            
+            // Precautions
+            if (result.stack?.precautions && result.stack.precautions.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ⚠️ Precautions");
+              lines.push("");
+              result.stack.precautions.forEach(precaution => {
+                lines.push(`- ${precaution}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "sleepOptimizer") {
+            // Format sleep optimization response
+            lines.push(`## 😴 Sleep Optimization Protocol`);
+            lines.push("");
+            
+            if (result.schedule) {
+              lines.push("### 📅 Sleep Schedule");
+              lines.push("");
+              lines.push(`**Current:** Bedtime ${result.schedule.current?.bedtime || "N/A"}, Wake ${result.schedule.current?.wakeTime || "N/A"}`);
+              lines.push(`**Optimal:** Bedtime ${result.schedule.optimal?.bedtime}, Wake ${result.schedule.optimal?.wakeTime}`);
+              lines.push(`**Target Sleep:** ${result.schedule.optimal?.totalHours} hours`);
+              lines.push("");
+              lines.push("---");
+              lines.push("");
+            }
+            
+            // Protocols
+            if (result.recommendation?.protocols && result.recommendation.protocols.length > 0) {
+              result.recommendation.protocols.forEach((protocol, idx) => {
+                lines.push(`### ${idx + 1}. ${protocol.name}`);
+                lines.push(protocol.description);
+                lines.push("");
+                protocol.steps.forEach(step => {
+                  lines.push(`**${step.time}**`);
+                  lines.push(`- ${step.action}${step.duration ? ` (${step.duration})` : ""}`);
+                  if (step.notes) {
+                    lines.push(`  *${step.notes}*`);
+                  }
+                  lines.push("");
+                });
+                if (idx < result.recommendation.protocols.length - 1) {
+                  lines.push("---");
+                  lines.push("");
+                }
+              });
+            }
+            
+            // Light exposure
+            if (result.recommendation?.lightExposure) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ☀️ Light Exposure Protocol");
+              lines.push("");
+              lines.push(`**Morning:** ${result.recommendation.lightExposure.morning}`);
+              lines.push(`**Evening:** ${result.recommendation.lightExposure.evening}`);
+              lines.push(`**Blue Light:** ${result.recommendation.lightExposure.blueLight}`);
+              lines.push("");
+            }
+            
+            // Temperature
+            if (result.recommendation?.temperature) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🌡️ Temperature Optimization");
+              lines.push("");
+              lines.push(`**Room Temperature:** ${result.recommendation.temperature.roomTemp}`);
+              lines.push(`**Body Preparation:** ${result.recommendation.temperature.bodyPrep}`);
+              lines.push("");
+            }
+            
+            // Supplements
+            if (result.recommendation?.supplements && result.recommendation.supplements.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💊 Sleep Supplements (Optional)");
+              lines.push("");
+              result.recommendation.supplements.forEach(supp => {
+                lines.push(`**${supp.name}**`);
+                lines.push(`- Dosage: ${supp.dosage}`);
+                lines.push(`- Timing: ${supp.timing}`);
+                lines.push(`- Purpose: ${supp.purpose}`);
+                lines.push("");
+              });
+            }
+            
+            // Environment
+            if (result.recommendation?.environment && result.recommendation.environment.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🏠 Sleep Environment");
+              lines.push("");
+              result.recommendation.environment.forEach(env => {
+                lines.push(`**${env.category}**`);
+                env.recommendations.forEach(rec => {
+                  lines.push(`- ${rec}`);
+                });
+                lines.push("");
+              });
+            }
+            
+            // Tips
+            if (result.recommendation?.tips && result.recommendation.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Sleep Tips");
+              lines.push("");
+              result.recommendation.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+          } else {
+            // Generic tool response
+            lines.push(JSON.stringify(result, null, 2));
           }
           
           lines.push("---");
           lines.push("");
-          lines.push("_Educational only. Not medical advice._");
+          lines.push("_Educational only. Not medical advice. Consult your healthcare provider before starting new supplements._");
 
           logger.info("Chat API: Tool executed successfully", { 
             userId, 
