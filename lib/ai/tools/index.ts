@@ -114,12 +114,58 @@ export function detectToolFromUserText(text: string): { name: string; args: unkn
     };
   }
 
+  // womensHealth triggers
+  const womensHealthTriggers = /(women|female|woman|menstrual|cycle|hormone|hormonal|pcos|menopause|period|pms|fertility|ovulation|luteal|follicular)/i.test(t) &&
+                                /(protocol|plan|program|optimize|support|help|recommend)/i.test(t);
+  
+  if (womensHealthTriggers) {
+    const goals: string[] = [];
+    if (/(hormonal|hormone.*balance|balance.*hormone)/i.test(t)) goals.push("hormonal_balance");
+    if (/(cycle|menstrual.*cycle|optimize.*cycle)/i.test(t)) goals.push("cycle_optimization");
+    if (/(pcos)/i.test(t)) goals.push("pcos");
+    if (/(menopause|menopausal)/i.test(t)) goals.push("menopause");
+    if (/(fertility|fertile|conceive)/i.test(t)) goals.push("fertility");
+    if (/(energy|energetic)/i.test(t)) goals.push("energy");
+    if (/(performance|athletic)/i.test(t)) goals.push("performance");
+    if (/(weight|weight.*loss|weight.*management)/i.test(t)) goals.push("weight_management");
+    if (/(mood|mood.*swing)/i.test(t)) goals.push("mood");
+    if (/(libido|sex.*drive)/i.test(t)) goals.push("libido");
+
+    if (goals.length === 0) {
+      goals.push("hormonal_balance", "cycle_optimization");
+    }
+
+    const cyclePhase = /(menstrual|period|bleeding)/i.test(t) ? "menstrual" :
+                       /(follicular)/i.test(t) ? "follicular" :
+                       /(ovulation|ovulatory)/i.test(t) ? "ovulatory" :
+                       /(luteal|pms)/i.test(t) ? "luteal" : undefined;
+
+    const issues: string[] = [];
+    if (/(irregular|irregular.*cycle)/i.test(t)) issues.push("irregular");
+    if (/(heavy.*bleeding|heavy.*period)/i.test(t)) issues.push("heavy_bleeding");
+    if (/(cramp|cramping)/i.test(t)) issues.push("cramps");
+    if (/(pms)/i.test(t)) issues.push("pms");
+    if (/(mood.*swing|mood.*change)/i.test(t)) issues.push("mood_swings");
+    if (/(low.*libido|low.*sex.*drive)/i.test(t)) issues.push("low_libido");
+
+    return {
+      name: "womensHealth",
+      args: {
+        goals,
+        cycleInfo: {
+          currentPhase: cyclePhase,
+          issues: issues.length > 0 ? issues : undefined,
+        },
+      }
+    };
+  }
+
   // protocolBuilder triggers (comprehensive protocol generation)
   const protocolTriggers = /(protocol|plan|program|routine|schedule).*(for|to|optimize|achieve|longevity|performance|weight|muscle|energy|stress|cognitive)/i.test(t) ||
                           /(create|build|generate|make).*(protocol|plan|program|routine|schedule)/i.test(t) ||
                           /(biohack|optimize).*(protocol|plan|program)/i.test(t);
   
-  if (protocolTriggers) {
+  if (protocolTriggers && !womensHealthTriggers) {
     const goals: string[] = [];
     if (/(longevity|live.*longer|anti.?aging)/i.test(t)) goals.push("longevity");
     if (/(performance|athletic|workout|training)/i.test(t)) goals.push("performance");

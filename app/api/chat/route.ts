@@ -11,6 +11,7 @@ import "@/lib/ai/tools/mealPlanner"; // ensure tool registers
 import "@/lib/ai/tools/supplementRecommender"; // ensure tool registers
 import "@/lib/ai/tools/sleepOptimizer"; // ensure tool registers
 import "@/lib/ai/tools/protocolBuilder"; // ensure tool registers
+import "@/lib/ai/tools/womensHealth"; // ensure tool registers
 
 export const runtime = "nodejs";
 
@@ -452,6 +453,139 @@ export async function POST(req: Request) {
               lines.push("---");
               lines.push("");
               lines.push("### 💡 Tips for Success");
+              lines.push("");
+              result.protocol.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+
+            // Warnings
+            if (result.protocol?.warnings && result.protocol.warnings.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ⚠️ Important Warnings");
+              lines.push("");
+              result.protocol.warnings.forEach(warning => {
+                lines.push(`- ${warning}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "womensHealth") {
+            // Format women's health protocol response
+            lines.push(`## 🌸 ${result.protocol?.title || "Women's Health Protocol"}`);
+            lines.push("");
+            lines.push(result.protocol?.description || result.summary || "");
+            if (result.protocol?.cyclePhase) {
+              lines.push(`**Current Cycle Phase:** ${result.protocol.cyclePhase.charAt(0).toUpperCase() + result.protocol.cyclePhase.slice(1)}`);
+            }
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+
+            // Cycle-based protocols
+            if (result.protocol?.protocols && result.protocol.protocols.length > 0) {
+              lines.push("### 📅 Cycle-Based Protocols");
+              lines.push("");
+              result.protocol.protocols.forEach((phaseProtocol, idx) => {
+                lines.push(`#### ${phaseProtocol.phase.charAt(0).toUpperCase() + phaseProtocol.phase.slice(1)} Phase (${phaseProtocol.days})`);
+                lines.push(phaseProtocol.description);
+                lines.push("");
+                
+                lines.push("**Nutrition:**");
+                phaseProtocol.recommendations.nutrition.forEach(rec => {
+                  lines.push(`- ${rec}`);
+                });
+                lines.push("");
+
+                lines.push("**Exercise:**");
+                phaseProtocol.recommendations.exercise.forEach(rec => {
+                  lines.push(`- ${rec}`);
+                });
+                lines.push("");
+
+                if (phaseProtocol.recommendations.supplements.length > 0) {
+                  lines.push("**Supplements:**");
+                  phaseProtocol.recommendations.supplements.forEach(supp => {
+                    lines.push(`- **${supp.name}:** ${supp.dosage} - ${supp.timing} (${supp.purpose})`);
+                  });
+                  lines.push("");
+                }
+
+                lines.push("**Lifestyle:**");
+                phaseProtocol.recommendations.lifestyle.forEach(rec => {
+                  lines.push(`- ${rec}`);
+                });
+                lines.push("");
+
+                if (idx < result.protocol.protocols.length - 1) {
+                  lines.push("---");
+                  lines.push("");
+                }
+              });
+            }
+
+            // General protocol
+            if (result.protocol?.generalProtocol) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💚 General Protocol (All Cycle Phases)");
+              lines.push("");
+
+              lines.push("**Nutrition:**");
+              result.protocol.generalProtocol.nutrition.forEach(rec => {
+                lines.push(`- ${rec}`);
+              });
+              lines.push("");
+
+              lines.push("**Exercise:**");
+              result.protocol.generalProtocol.exercise.forEach(rec => {
+                lines.push(`- ${rec}`);
+              });
+              lines.push("");
+
+              if (result.protocol.generalProtocol.supplements.length > 0) {
+                lines.push("**Supplements:**");
+                result.protocol.generalProtocol.supplements.forEach(supp => {
+                  lines.push(`- **${supp.name}:** ${supp.dosage} - ${supp.timing} (${supp.purpose})`);
+                });
+                lines.push("");
+              }
+
+              lines.push("**Lifestyle:**");
+              result.protocol.generalProtocol.lifestyle.forEach(rec => {
+                lines.push(`- ${rec}`);
+              });
+              lines.push("");
+            }
+
+            // Hormonal optimization
+            if (result.protocol?.hormonalOptimization) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ⚖️ Hormonal Optimization");
+              lines.push("");
+
+              lines.push("**Strategies:**");
+              result.protocol.hormonalOptimization.strategies.forEach(strategy => {
+                lines.push(`- ${strategy}`);
+              });
+              lines.push("");
+
+              if (result.protocol.hormonalOptimization.supplements.length > 0) {
+                lines.push("**Supplements:**");
+                result.protocol.hormonalOptimization.supplements.forEach(supp => {
+                  lines.push(`- **${supp.name}:** ${supp.dosage} - ${supp.timing} (${supp.purpose})`);
+                });
+                lines.push("");
+              }
+            }
+
+            // Tips
+            if (result.protocol?.tips && result.protocol.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Tips");
               lines.push("");
               result.protocol.tips.forEach(tip => {
                 lines.push(`- ${tip}`);
