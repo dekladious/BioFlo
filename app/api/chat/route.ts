@@ -217,9 +217,12 @@ export async function POST(req: Request) {
     }
 
     // Default: LLM response using model router
+    // PRIMARY: Anthropic Claude 4.5 (as per architecture)
+    // Fallback to OpenAI if Anthropic is not available
+    const provider = (process.env.AI_PROVIDER as "openai" | "anthropic") || "anthropic";
     const text = await withTimeout(
       runModel({
-        provider: (process.env.AI_PROVIDER as "openai" | "anthropic") || "openai",
+        provider,
         system: BIOFLO_SYSTEM_PROMPT,
         messages: messages.slice(-20).map(m => ({
           role: m.role as "user" | "assistant",

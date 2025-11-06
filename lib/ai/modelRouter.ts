@@ -35,7 +35,7 @@ export class ModelError extends Error {
 }
 
 export async function runModel({ 
-  provider = "openai", 
+  provider = "anthropic", // PRIMARY: Anthropic Claude 4.5 (as per architecture)
   model, 
   system, 
   messages,
