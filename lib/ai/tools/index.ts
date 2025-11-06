@@ -88,7 +88,8 @@ export function detectToolFromUserText(text: string): { name: string; args: unkn
 
   // sleepOptimizer triggers
   const sleepTriggers = /(sleep|sleep.*optim|sleep.*protocol|circadian|insomnia|sleep.*schedule|sleep.*routine|better.*sleep|improve.*sleep|sleep.*quality|trouble.*sleep|can't.*sleep)/i.test(t);
-  if (sleepTriggers) {
+  if (sleepTriggers && !/(protocol|plan|program|routine|schedule).*(for|to|optimize)/i.test(t)) {
+    // Only trigger if it's specifically about sleep optimization, not protocol building
     const sleepIssues: string[] = [];
     if (/(falling.*asleep|can't.*fall.*asleep|trouble.*falling)/i.test(t)) sleepIssues.push("falling_asleep");
     if (/(staying.*asleep|wake.*up|can't.*stay)/i.test(t)) sleepIssues.push("staying_asleep");
@@ -109,6 +110,61 @@ export function detectToolFromUserText(text: string): { name: string; args: unkn
           sleepIssues: sleepIssues.length > 0 ? sleepIssues : undefined,
         },
         goals: goals.length > 0 ? goals : ["better_sleep"],
+      }
+    };
+  }
+
+  // protocolBuilder triggers (comprehensive protocol generation)
+  const protocolTriggers = /(protocol|plan|program|routine|schedule).*(for|to|optimize|achieve|longevity|performance|weight|muscle|energy|stress|cognitive)/i.test(t) ||
+                          /(create|build|generate|make).*(protocol|plan|program|routine|schedule)/i.test(t) ||
+                          /(biohack|optimize).*(protocol|plan|program)/i.test(t);
+  
+  if (protocolTriggers) {
+    const goals: string[] = [];
+    if (/(longevity|live.*longer|anti.?aging)/i.test(t)) goals.push("longevity");
+    if (/(performance|athletic|workout|training)/i.test(t)) goals.push("performance");
+    if (/(weight.*loss|lose.*weight|fat.*loss)/i.test(t)) goals.push("weight_loss");
+    if (/(muscle.*gain|build.*muscle|gain.*muscle)/i.test(t)) goals.push("muscle_gain");
+    if (/(energy|energetic|energy.*levels)/i.test(t)) goals.push("energy");
+    if (/(sleep|sleep.*quality|better.*sleep)/i.test(t)) goals.push("sleep");
+    if (/(stress|stress.*reduction|anxiety|cortisol)/i.test(t)) goals.push("stress_reduction");
+    if (/(cognitive|brain|memory|focus|mental)/i.test(t)) goals.push("cognitive_enhancement");
+    if (/(recovery|recover)/i.test(t)) goals.push("recovery");
+    if (/(hormone|hormonal|testosterone|estrogen)/i.test(t)) goals.push("hormonal_optimization");
+
+    // Default goals if none detected
+    if (goals.length === 0) {
+      goals.push("energy", "sleep");
+    }
+
+    // Duration
+    const duration = /(1.*week|one.*week)/i.test(t) ? "1_week" :
+                     /(2.*week|two.*week)/i.test(t) ? "2_weeks" :
+                     /(8.*week|eight.*week)/i.test(t) ? "8_weeks" :
+                     /(12.*week|three.*month|3.*month)/i.test(t) ? "12_weeks" : "4_weeks";
+
+    // Preferences
+    const fasting = /(fast|fasting|intermittent.*fast|if)/i.test(t);
+    const vegan = /(vegan|plant.*based)/i.test(t);
+    const budget = /(low.*budget|cheap|affordable)/i.test(t) ? "low" :
+                   /(high.*budget|premium|expensive)/i.test(t) ? "high" : "medium";
+    const experience = /(beginner|new|just.*starting)/i.test(t) ? "beginner" :
+                       /(advanced|expert|experienced)/i.test(t) ? "advanced" : "intermediate";
+    const timeAvailable = /(minimal|little.*time|busy)/i.test(t) ? "minimal" :
+                          /(extensive|lots.*time|plenty.*time)/i.test(t) ? "extensive" : "moderate";
+
+    return {
+      name: "protocolBuilder",
+      args: {
+        goals,
+        duration,
+        preferences: {
+          fasting,
+          vegan,
+          budget,
+          experience,
+          timeAvailable,
+        },
       }
     };
   }

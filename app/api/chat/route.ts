@@ -10,6 +10,7 @@ import { getRequestMetadata, validateContentType, withTimeout, createErrorRespon
 import "@/lib/ai/tools/mealPlanner"; // ensure tool registers
 import "@/lib/ai/tools/supplementRecommender"; // ensure tool registers
 import "@/lib/ai/tools/sleepOptimizer"; // ensure tool registers
+import "@/lib/ai/tools/protocolBuilder"; // ensure tool registers
 
 export const runtime = "nodejs";
 
@@ -356,6 +357,116 @@ export async function POST(req: Request) {
               lines.push("");
               result.recommendation.tips.forEach(tip => {
                 lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "protocolBuilder") {
+            // Format protocol builder response
+            lines.push(`## 🎯 ${result.protocol?.title || "Personalized Biohacking Protocol"}`);
+            lines.push("");
+            lines.push(result.protocol?.description || result.summary || "");
+            lines.push("");
+            lines.push(`**Duration:** ${result.protocol?.duration || "4 weeks"}`);
+            lines.push(`**Goals:** ${result.protocol?.goals?.join(", ") || "Optimization"}`);
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+
+            // Protocol phases
+            if (result.protocol?.phases && result.protocol.phases.length > 0) {
+              lines.push("### 📋 Protocol Phases");
+              lines.push("");
+              result.protocol.phases.forEach((phase, idx) => {
+                lines.push(`#### Phase ${idx + 1}: ${phase.name}`);
+                lines.push(`**Duration:** ${phase.duration}`);
+                lines.push(`**Description:** ${phase.description}`);
+                lines.push(`**Goals:** ${phase.goals.join(", ")}`);
+                lines.push("");
+                
+                if (phase.steps && phase.steps.length > 0) {
+                  lines.push("**Key Steps:**");
+                  phase.steps.forEach(step => {
+                    lines.push(`- **Day ${step.day} - ${step.category}:** ${step.action}`);
+                    lines.push(`  - ${step.details}`);
+                    if (step.timing) lines.push(`  - Timing: ${step.timing}`);
+                    if (step.notes) lines.push(`  - Note: ${step.notes}`);
+                    lines.push("");
+                  });
+                }
+                
+                if (idx < result.protocol.phases.length - 1) {
+                  lines.push("---");
+                  lines.push("");
+                }
+              });
+            }
+
+            // Daily routine
+            if (result.protocol?.dailyRoutine && result.protocol.dailyRoutine.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ⏰ Daily Routine");
+              lines.push("");
+              result.protocol.dailyRoutine.forEach(slot => {
+                lines.push(`**${slot.time}**`);
+                slot.actions.forEach(action => {
+                  lines.push(`- ${action}`);
+                });
+                lines.push("");
+              });
+            }
+
+            // Metrics
+            if (result.protocol?.metrics && result.protocol.metrics.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 📊 Metrics to Track");
+              lines.push("");
+              result.protocol.metrics.forEach(metric => {
+                lines.push(`**${metric.metric}**`);
+                lines.push(`- How to measure: ${metric.howToMeasure}`);
+                if (metric.target) {
+                  lines.push(`- Target: ${metric.target}`);
+                }
+                lines.push("");
+              });
+            }
+
+            // Supplements
+            if (result.protocol?.supplements && result.protocol.supplements.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💊 Recommended Supplements");
+              lines.push("");
+              result.protocol.supplements.forEach(supp => {
+                lines.push(`**${supp.name}**`);
+                lines.push(`- Dosage: ${supp.dosage}`);
+                lines.push(`- Timing: ${supp.timing}`);
+                lines.push(`- Purpose: ${supp.purpose}`);
+                lines.push("");
+              });
+            }
+
+            // Tips
+            if (result.protocol?.tips && result.protocol.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Tips for Success");
+              lines.push("");
+              result.protocol.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+
+            // Warnings
+            if (result.protocol?.warnings && result.protocol.warnings.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### ⚠️ Important Warnings");
+              lines.push("");
+              result.protocol.warnings.forEach(warning => {
+                lines.push(`- ${warning}`);
               });
               lines.push("");
             }
