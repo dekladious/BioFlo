@@ -3,156 +3,166 @@
 @tailwind utilities;
 
 @layer base {
-  * {
-    @apply border-border;
-  }
+  html,
   body {
-    @apply bg-gradient-to-br from-slate-50 via-white to-slate-50 text-slate-900 antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    background-color: #0b1117;
+    color: rgb(241, 245, 249);
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+}
+
+@keyframes fiber-sweep {
+  0% {
+    transform: translate3d(-3%, -2%, 0) rotate(0.25deg);
+  }
+  100% {
+    transform: translate3d(2%, 3%, 0) rotate(-0.25deg);
   }
 }
 
 @layer utilities {
-  .gradient-text {
-    @apply bg-gradient-to-r from-violet-600 via-purple-600 to-fuchsia-600 bg-clip-text text-transparent;
+  .animate-fiber-sweep {
+    animation: fiber-sweep 26s ease-in-out infinite alternate;
   }
-  
-  .glass {
-    @apply bg-white/80 backdrop-blur-xl border border-white/20 shadow-xl;
-  }
-  
-  .glass-dark {
-    @apply bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 shadow-2xl;
-  }
-}
-
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  @apply bg-slate-100;
-}
-
-::-webkit-scrollbar-thumb {
-  @apply bg-slate-300 rounded-full;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-slate-400;
 }
 
 /* Markdown prose styles for chat */
 .prose {
-  @apply text-slate-800;
-  max-width: 100%;
+  color: inherit;
 }
 
-.prose p {
-  @apply mb-3 leading-relaxed;
-}
-
-.prose code {
-  @apply text-sm font-mono;
-}
-
-.prose pre {
-  @apply bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto mb-4;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.prose pre code {
-  @apply bg-transparent p-0 text-slate-100;
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  color: rgb(241, 245, 249);
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
 }
 
 .prose h1 {
-  @apply text-2xl font-bold mb-4 mt-6 first:mt-0 text-slate-900;
+  font-size: 1.5em;
 }
 
 .prose h2 {
-  @apply text-xl font-semibold mb-3 mt-5 first:mt-0 text-slate-900;
+  font-size: 1.25em;
 }
 
 .prose h3 {
-  @apply text-lg font-semibold mb-2 mt-4 first:mt-0 text-slate-900;
+  font-size: 1.1em;
 }
 
-.prose ul, .prose ol {
-  @apply mb-4 space-y-2;
+.prose p {
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+  line-height: 1.6;
+}
+
+.prose ul,
+.prose ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-left: 1.5em;
 }
 
 .prose li {
-  @apply ml-4;
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
 }
 
-.prose strong {
-  @apply font-semibold text-slate-900;
+.prose code {
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 0.125em 0.375em;
+  border-radius: 0.25rem;
+  font-size: 0.9em;
+}
+
+.prose pre {
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 1em;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.prose hr {
+  border-color: rgba(255, 255, 255, 0.1);
+  margin-top: 2em;
+  margin-bottom: 2em;
 }
 
 .prose blockquote {
-  @apply border-l-4 border-violet-500 pl-4 italic my-4 text-slate-700;
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
+  padding-left: 1em;
+  margin-left: 0;
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .prose a {
-  @apply text-violet-600 hover:text-violet-700 underline;
+  color: rgb(56, 189, 248);
+  text-decoration: underline;
 }
 
-/* Animations */
-@keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
-  }
-  100% {
-    background-position: 1000px 0;
-  }
+.prose a:hover {
+  color: rgb(125, 211, 252);
 }
 
-.animate-shimmer {
-  animation: shimmer 2s infinite linear;
-  background: linear-gradient(
-    to right,
-    #f6f7f8 0%,
-    #edeef1 20%,
-    #f6f7f8 40%,
-    #f6f7f8 100%
-  );
-  background-size: 1000px 100%;
+.prose strong {
+  font-weight: 600;
+  color: rgb(241, 245, 249);
 }
 
-@keyframes pulse-glow {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
-  }
-  50% {
-    opacity: 0.8;
-    box-shadow: 0 0 30px rgba(139, 92, 246, 0.5);
-  }
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1em;
+  margin-bottom: 1em;
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+.prose th,
+.prose td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.5em;
+  text-align: left;
 }
 
-/* Message animations */
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.prose th {
+  font-weight: 600;
+  background-color: rgba(255, 255, 255, 0.05);
 }
 
-.message-enter {
-  animation: slideIn 0.3s ease-out;
+/* subtle scrollbar */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  border: 2px solid rgba(11, 17, 23, 0.9);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
 }

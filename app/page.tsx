@@ -1,101 +1,104 @@
 import Link from "next/link";
-import { SignedIn, SignedOut } from "@clerk/nextjs";
+import { Sparkles, UtensilsCrossed, MoonStar } from "lucide-react";
+
+const FEATURES = [
+  {
+    title: "Anxiety protocols",
+    body: "Calm stress and improve resilience",
+    Icon: Sparkles,
+  },
+  {
+    title: "Nutrition & meal plans",
+    body: "Optimize diet for your biology",
+    Icon: UtensilsCrossed,
+  },
+  {
+    title: "Sleep & recovery",
+    body: "Tools to enhance sleep quality",
+    Icon: MoonStar,
+  },
+];
 
 export default function Home() {
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16 lg:py-20">
-      {/* Hero Section */}
-      <div className="text-center max-w-4xl mx-auto">
-        <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-violet-600 via-purple-600 to-fuchsia-600 mb-8 shadow-2xl animate-pulse-glow">
-          <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-        </div>
-        
-        <h1 className="text-5xl sm:text-6xl lg:text-7xl font-extrabold mb-6">
-          <span className="gradient-text">Elite Biohacking</span>
-          <br />
-          <span className="text-slate-900">Personal Assistant</span>
-        </h1>
-        
-        <p className="text-xl sm:text-2xl text-slate-600 mb-4 max-w-2xl mx-auto leading-relaxed">
-          Get personalized, evidence-based protocols to optimize your health, performance, and longevity.
-        </p>
-        
-        <p className="text-base text-slate-500 mb-10 max-w-xl mx-auto">
-          Powered by AI. Built on science. Tailored to you.
-        </p>
+    <div className="mx-auto mt-12 max-w-7xl px-3 sm:px-4">
+      {/* HERO */}
+      <section
+        className="relative rounded-[22px] border border-white/10 bg-white/[0.045] backdrop-blur
+                   shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_30px_60px_rgba(0,0,0,0.45)]
+                   px-6 sm:px-10 md:px-14 py-10 md:py-14"
+      >
+        {/* soft glow underline behind primary CTA */}
+        <div
+          className="pointer-events-none absolute left-1/2 top-[132px] h-20 w-[420px] -translate-x-1/2 rounded-full blur-3xl opacity-50
+                        bg-[radial-gradient(60%_60%_at_50%_50%,rgba(56,189,248,0.35),transparent_60%)]"
+        />
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-          <SignedIn>
-            <Link 
-              href="/chat"
-              className="px-8 py-4 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-2xl font-semibold text-lg hover:from-violet-700 hover:to-purple-700 transition-all shadow-xl shadow-violet-500/25 hover:shadow-violet-500/40 hover:scale-105 active:scale-95"
-            >
-              Open Chat
-            </Link>
-          </SignedIn>
-          <SignedOut>
-            <Link 
-              href="/sign-in"
-              className="px-8 py-4 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-2xl font-semibold text-lg hover:from-violet-700 hover:to-purple-700 transition-all shadow-xl shadow-violet-500/25 hover:shadow-violet-500/40 hover:scale-105 active:scale-95"
-            >
-              Get Started
-            </Link>
-            <Link 
+        <div className="text-center">
+          <h1 className="text-[40px] leading-[1.05] font-semibold md:text-[64px] tracking-tight">
+            Your elite biohacking{" "}
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 via-teal-300 to-emerald-400">
+              copilot
+            </span>
+          </h1>
+
+          <p className="mx-auto mt-4 max-w-3xl text-slate-300">
+            BioFlo Pro provides expert wellness guidance personalized to your unique needs.
+          </p>
+
+          <div className="mt-7 flex items-center justify-center gap-3">
+            <Link
               href="/subscribe"
-              className="px-8 py-4 bg-white/80 backdrop-blur-sm border-2 border-slate-200 text-slate-900 rounded-2xl font-semibold text-lg hover:bg-white hover:border-violet-300 transition-all shadow-lg hover:scale-105 active:scale-95"
+              className="px-5 py-3 rounded-xl bg-gradient-to-r from-sky-400 to-emerald-400 text-black font-medium
+                         shadow-[0_16px_40px_rgba(56,189,248,0.35)] hover:brightness-110 transition will-change-transform"
             >
-              View Plans
+              Get BioFlo Pro
             </Link>
-          </SignedOut>
+            <Link
+              href="/chat"
+              className="px-5 py-3 rounded-xl border border-white/10 hover:bg-white/5 transition"
+            >
+              Try the chat
+            </Link>
+          </div>
         </div>
 
-        {/* Features Grid */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-20">
-          {[
-            {
-              icon: "💊",
-              title: "Supplement Stack",
-              description: "Personalized supplement recommendations based on your goals",
-            },
-            {
-              icon: "😴",
-              title: "Sleep Optimization",
-              description: "Circadian rhythm alignment and sleep quality protocols",
-            },
-            {
-              icon: "📋",
-              title: "Meal Planning",
-              description: "Custom meal plans with macro optimization",
-            },
-            {
-              icon: "🎯",
-              title: "Protocol Builder",
-              description: "Comprehensive multi-phase biohacking protocols",
-            },
-            {
-              icon: "🌸",
-              title: "Women's Health",
-              description: "Cycle-based optimization and hormonal protocols",
-            },
-            {
-              icon: "🔬",
-              title: "Evidence-Based",
-              description: "Built on latest research and best practices",
-            },
-          ].map((feature, i) => (
-            <div 
-              key={i}
-              className="glass p-6 rounded-2xl hover:shadow-xl transition-all duration-300 hover:scale-105 border border-slate-200/50"
+        {/* FEATURE CARDS */}
+        <div className="mt-9 grid gap-5 md:grid-cols-3">
+          {FEATURES.map(({ title, body, Icon }) => (
+            <div
+              key={title}
+              className="group relative overflow-hidden rounded-[18px] border border-white/10 bg-white/[0.055] p-6
+                         shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_20px_40px_rgba(0,0,0,0.35)]
+                         hover:border-white/20 hover:bg-white/[0.07] transition"
             >
-              <div className="text-4xl mb-4">{feature.icon}</div>
-              <h3 className="font-semibold text-slate-900 mb-2">{feature.title}</h3>
-              <p className="text-sm text-slate-600 leading-relaxed">{feature.description}</p>
+              {/* corner sheen */}
+              <div
+                className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full blur-2xl opacity-0
+                              bg-[radial-gradient(60%_60%_at_50%_50%,rgba(56,189,248,0.25),transparent_60%)]
+                              group-hover:opacity-100 transition"
+              />
+              <div className="flex items-center gap-3">
+                <div
+                  className="grid place-items-center rounded-xl p-2
+                             bg-gradient-to-br from-sky-400/20 to-emerald-400/20
+                             border border-white/10"
+                >
+                  <Icon className="h-5 w-5 text-slate-200" />
+                </div>
+                <div className="font-semibold">{title}</div>
+              </div>
+              <p className="mt-2 text-sm text-slate-300">{body}</p>
             </div>
           ))}
         </div>
-      </div>
-    </main>
+
+        {/* soft card outline */}
+        <div className="pointer-events-none absolute inset-0 rounded-[22px] ring-1 ring-white/5" />
+      </section>
+
+      {/* breathing room so the footer doesn't hug the hero on tall displays */}
+      <div className="h-28" />
+    </div>
   );
 }

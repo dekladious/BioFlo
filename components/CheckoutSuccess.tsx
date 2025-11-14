@@ -7,7 +7,7 @@ export default function CheckoutSuccess() {
 
   useEffect(() => {
     const retryCountRef = { current: 0 };
-    const maxRetries = 15; // Try for 30 seconds (15 * 2s)
+    const maxRetries = 15;
 
     const checkStatus = async () => {
       try {
@@ -18,12 +18,10 @@ export default function CheckoutSuccess() {
           throw new Error(data.error || `HTTP error! status: ${res.status}`);
         }
         
-        // Handle both old and new response formats
         const isPro = data.data?.isPro ?? data.isPro;
         
         if (isPro) {
           setStatus("success");
-          // Redirect to chat after a moment
           setTimeout(() => {
             window.location.href = "/chat";
           }, 2000);
@@ -33,7 +31,6 @@ export default function CheckoutSuccess() {
             setStatus("error");
             setError("Subscription activation is taking longer than expected. Please refresh the page or contact support.");
           } else {
-            // Keep checking every 2 seconds
             setTimeout(checkStatus, 2000);
           }
         }
@@ -44,16 +41,12 @@ export default function CheckoutSuccess() {
           setStatus("error");
           setError(error.message || "Failed to check subscription status. Please refresh the page.");
         } else {
-          // Keep trying
           setTimeout(checkStatus, 2000);
         }
       }
     };
 
-    // Start checking after 1 second
     const timer = setTimeout(checkStatus, 1000);
-    
-    // Auto-refresh after 30 seconds as fallback
     const refreshTimer = setTimeout(() => {
       if (status !== "success") {
         window.location.reload();
@@ -64,24 +57,38 @@ export default function CheckoutSuccess() {
       clearTimeout(timer);
       clearTimeout(refreshTimer);
     };
-  }, []); // Empty deps - only run once on mount
+  }, []);
 
   if (status === "success") {
     return (
-      <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 mb-4">
-        <p className="font-semibold">✅ Pro status activated! Redirecting...</p>
+      <div className="glass-strong bg-green-50/80 border-green-200/60 rounded-3xl p-6 mb-8 animate-slide-up">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0 shadow-lg">
+            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div>
+            <p className="font-black text-green-900 text-lg">Pro status activated! Redirecting...</p>
+          </div>
+        </div>
       </div>
     );
   }
 
   if (status === "error") {
     return (
-      <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 mb-4">
-        <p className="font-semibold">⚠️ Activation delayed</p>
-        <p className="text-sm mt-1">{error}</p>
+      <div className="glass-card bg-red-50/80 border-red-200/60 rounded-3xl p-6 mb-8 animate-slide-up">
+        <div className="flex items-center gap-4 mb-4">
+          <svg className="w-6 h-6 text-red-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="font-black text-red-900 text-lg">Activation delayed</p>
+        </div>
+        <p className="text-sm text-red-700 mb-4 font-semibold">{error}</p>
         <button
           onClick={() => window.location.reload()}
-          className="mt-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm"
+          className="btn-secondary py-2.5 px-6 text-sm"
         >
           Refresh Page
         </button>
@@ -90,11 +97,18 @@ export default function CheckoutSuccess() {
   }
 
   return (
-    <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 mb-4">
-      <p className="font-semibold">Payment successful! 🎉</p>
-      <p className="text-sm mt-1">
-        Activating your subscription... Please wait.
-      </p>
+    <div className="glass-strong bg-green-50/80 border-green-200/60 rounded-3xl p-6 mb-8 animate-slide-up">
+      <div className="flex items-center gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0 shadow-lg">
+          <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+        </div>
+        <div>
+          <p className="font-black text-green-900 text-lg mb-1">Payment successful! 🎉</p>
+          <p className="text-sm text-green-700 font-semibold">
+            Activating your subscription... Please wait.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

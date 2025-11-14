@@ -12,6 +12,11 @@ import "@/lib/ai/tools/supplementRecommender"; // ensure tool registers
 import "@/lib/ai/tools/sleepOptimizer"; // ensure tool registers
 import "@/lib/ai/tools/protocolBuilder"; // ensure tool registers
 import "@/lib/ai/tools/womensHealth"; // ensure tool registers
+import "@/lib/ai/tools/fastingPlanner"; // ensure tool registers
+import "@/lib/ai/tools/coldHotTherapy"; // ensure tool registers
+import "@/lib/ai/tools/stressManagement"; // ensure tool registers
+import "@/lib/ai/tools/macroCalculator"; // ensure tool registers
+import "@/lib/ai/tools/recoveryOptimizer"; // ensure tool registers
 
 export const runtime = "nodejs";
 
@@ -45,12 +50,42 @@ export async function POST(req: Request) {
       return createErrorResponse("Unauthorized", requestId, 401);
     }
 
-    // Rate limiting
-    const identifier = getRateLimitIdentifier(userId, ip);
-    const rateLimitResult = rateLimit(identifier, RATE_LIMIT_CONFIG);
+    // Rate limiting (skip in development if DISABLE_RATE_LIMIT is set)
+    let rateLimitResult;
+    const disableRateLimit = process.env.DISABLE_RATE_LIMIT === "true" || process.env.DISABLE_RATE_LIMIT === "1";
+    const isDevelopment = process.env.NODE_ENV === "development" || !process.env.NODE_ENV;
     
-    if (!rateLimitResult.success) {
-      logger.warn("Chat API: Rate limit exceeded", { 
+    // Log rate limit status for debugging
+    logger.debug("Rate limit check", { 
+      disableRateLimit, 
+      isDevelopment, 
+      DISABLE_RATE_LIMIT: process.env.DISABLE_RATE_LIMIT,
+      NODE_ENV: process.env.NODE_ENV,
+      userId,
+      requestId 
+    });
+    
+    if (disableRateLimit && isDevelopment) {
+      // Skip rate limiting in dev mode if explicitly disabled
+      logger.info("Rate limiting DISABLED in development", { userId, requestId });
+      rateLimitResult = {
+        success: true,
+        remaining: RATE_LIMIT_CONFIG.maxRequests,
+        resetAt: Date.now() + RATE_LIMIT_CONFIG.windowMs,
+      };
+    } else {
+      const identifier = getRateLimitIdentifier(userId, ip);
+      rateLimitResult = rateLimit(identifier, RATE_LIMIT_CONFIG);
+      logger.debug("Rate limit check result", { 
+        success: rateLimitResult.success, 
+        remaining: rateLimitResult.remaining,
+        identifier,
+        userId,
+        requestId 
+      });
+      
+      if (!rateLimitResult.success) {
+        logger.warn("Chat API: Rate limit exceeded", { 
         userId, 
         identifier, 
         retryAfter: rateLimitResult.retryAfter,
@@ -59,7 +94,7 @@ export async function POST(req: Request) {
       return Response.json(
         { 
           success: false,
-          error: "Rate limit exceeded", 
+            error: `Rate limit exceeded. You've used ${RATE_LIMIT_CONFIG.maxRequests} requests. Please try again in ${Math.ceil((rateLimitResult.retryAfter || 0) / 60)} minute${Math.ceil((rateLimitResult.retryAfter || 0) / 60) !== 1 ? 's' : ''}.`,
           retryAfter: rateLimitResult.retryAfter,
           requestId,
           timestamp: new Date().toISOString(),
@@ -75,6 +110,7 @@ export async function POST(req: Request) {
           },
         }
       );
+      }
     }
     
     // Paywall check
@@ -155,7 +191,7 @@ export async function POST(req: Request) {
             requestId,
             timestamp: new Date().toISOString(),
           });
-        }
+    }
 
         try {
           const result = await tool.handler(parsed.data);
@@ -179,6 +215,39 @@ export async function POST(req: Request) {
               m.items.forEach(item => {
                 lines.push(`- ${item}`);
               });
+              lines.push("");
+            }
+            
+            if (result.fastingRecommendations) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🕐 Fasting Window Recommendation");
+              lines.push("");
+              lines.push(`**Suggested Protocol:** ${result.fastingRecommendations.suggestedProtocol}`);
+              lines.push(`**Eating Window:** ${result.fastingRecommendations.eatingWindow}`);
+              lines.push(`**Fasting Window:** ${result.fastingRecommendations.fastingWindow}`);
+              lines.push("");
+              lines.push("**Benefits:**");
+              result.fastingRecommendations.benefits.forEach(benefit => {
+                lines.push(`- ${benefit}`);
+              });
+              lines.push("");
+              lines.push(`*${result.fastingRecommendations.notes}*`);
+              lines.push("");
+            }
+            
+            if (result.electrolyteRecommendations) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🧂 Electrolyte Recommendations");
+              lines.push("");
+              lines.push(`**Sodium:** ${result.electrolyteRecommendations.sodium}`);
+              lines.push(`**Potassium:** ${result.electrolyteRecommendations.potassium}`);
+              lines.push(`**Magnesium:** ${result.electrolyteRecommendations.magnesium}`);
+              if (result.electrolyteRecommendations.notes) {
+                lines.push("");
+                lines.push(`*${result.electrolyteRecommendations.notes}*`);
+              }
               lines.push("");
             }
             
@@ -604,6 +673,486 @@ export async function POST(req: Request) {
               });
               lines.push("");
             }
+          } else if (tool.name === "fastingPlanner") {
+            // Format fasting planner response
+            lines.push(`## 🕐 Fasting Protocol: ${result.protocol.name}`);
+            lines.push("");
+            lines.push(result.protocol.description);
+            lines.push("");
+            lines.push(`**Fasting Window:** ${result.protocol.fastingWindow}`);
+            lines.push(`**Eating Window:** ${result.protocol.eatingWindow}`);
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            lines.push("### 📅 Schedule");
+            lines.push("");
+            lines.push(`**Fasting Period:** ${result.protocol.schedule.fastingStart} - ${result.protocol.schedule.fastingEnd}`);
+            lines.push(`**Eating Period:** ${result.protocol.schedule.eatingStart} - ${result.protocol.schedule.eatingEnd}`);
+            lines.push("");
+            
+            if (result.protocol.progression) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 📈 4-Week Progression Plan");
+              lines.push("");
+              lines.push(`**Week 1:** ${result.protocol.progression.week1}`);
+              lines.push(`**Week 2:** ${result.protocol.progression.week2}`);
+              lines.push(`**Week 3:** ${result.protocol.progression.week3}`);
+              lines.push(`**Week 4:** ${result.protocol.progression.week4}`);
+              lines.push("");
+            }
+            
+            lines.push("---");
+            lines.push("");
+            lines.push("### 🧂 Electrolyte Recommendations");
+            lines.push("");
+            lines.push(`**Sodium:** ${result.electrolytes.sodium}`);
+            lines.push(`**Potassium:** ${result.electrolytes.potassium}`);
+            lines.push(`**Magnesium:** ${result.electrolytes.magnesium}`);
+            if (result.electrolytes.notes) {
+              lines.push("");
+              lines.push(`*${result.electrolytes.notes}*`);
+            }
+            lines.push("");
+            
+            lines.push("---");
+            lines.push("");
+            lines.push("### 🍽️ Breaking Your Fast");
+            lines.push("");
+            lines.push(`**${result.breakingFast.firstMeal}**`);
+            lines.push(`**Timing:** ${result.breakingFast.timing}`);
+            lines.push("");
+            lines.push("**Recommended Foods:**");
+            result.breakingFast.foods.forEach(food => {
+              lines.push(`- ${food}`);
+            });
+            lines.push("");
+            lines.push("**Avoid:**");
+            result.breakingFast.avoid.forEach(item => {
+              lines.push(`- ${item}`);
+            });
+            lines.push("");
+            lines.push(`*${result.breakingFast.notes}*`);
+            lines.push("");
+            
+            if (result.mealSuggestions) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🥗 Meal Suggestions");
+              lines.push("");
+              if (result.mealSuggestions.meal1) {
+                lines.push("**Meal 1:**");
+                result.mealSuggestions.meal1.forEach(suggestion => {
+                  lines.push(`- ${suggestion}`);
+                });
+                lines.push("");
+              }
+              if (result.mealSuggestions.meal2) {
+                lines.push("**Meal 2:**");
+                result.mealSuggestions.meal2.forEach(suggestion => {
+                  lines.push(`- ${suggestion}`);
+                });
+                lines.push("");
+              }
+              if (result.mealSuggestions.meal3) {
+                lines.push("**Meal 3:**");
+                result.mealSuggestions.meal3.forEach(suggestion => {
+                  lines.push(`- ${suggestion}`);
+                });
+                lines.push("");
+              }
+            }
+            
+            if (result.tips && result.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Tips for Success");
+              lines.push("");
+              result.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "coldHotTherapy") {
+            // Format cold/hot therapy response
+            lines.push(`## 🧊❄️ Cold & Heat Therapy Protocol`);
+            lines.push("");
+            
+            if (result.coldPlunge) {
+              lines.push("### 🧊 Cold Exposure Protocol");
+              lines.push("");
+              lines.push(`**${result.coldPlunge.name}**`);
+              lines.push(result.coldPlunge.description);
+              lines.push("");
+              lines.push(`**Temperature:** ${result.coldPlunge.temperature}`);
+              lines.push(`**Duration:** ${result.coldPlunge.duration}`);
+              lines.push(`**Frequency:** ${result.coldPlunge.frequency}`);
+              lines.push("");
+              lines.push("**4-Week Progression:**");
+              lines.push(`- Week 1: ${result.coldPlunge.progression.week1}`);
+              lines.push(`- Week 2: ${result.coldPlunge.progression.week2}`);
+              lines.push(`- Week 3: ${result.coldPlunge.progression.week3}`);
+              lines.push(`- Week 4: ${result.coldPlunge.progression.week4}`);
+              lines.push("");
+              lines.push("**Safety Guidelines:**");
+              result.coldPlunge.safety.forEach(safety => {
+                lines.push(`- ${safety}`);
+              });
+              lines.push("");
+              lines.push("---");
+              lines.push("");
+            }
+            
+            if (result.sauna) {
+              lines.push("### 🔥 Sauna Protocol");
+              lines.push("");
+              lines.push(`**${result.sauna.name}**`);
+              lines.push(result.sauna.description);
+              lines.push("");
+              lines.push(`**Temperature:** ${result.sauna.temperature}`);
+              lines.push(`**Duration:** ${result.sauna.duration}`);
+              lines.push(`**Frequency:** ${result.sauna.frequency}`);
+              lines.push(`**Hydration:** ${result.sauna.hydration}`);
+              lines.push("");
+              lines.push("**Safety Guidelines:**");
+              result.sauna.safety.forEach(safety => {
+                lines.push(`- ${safety}`);
+              });
+              lines.push("");
+              lines.push("---");
+              lines.push("");
+            }
+            
+            if (result.contrast) {
+              lines.push("### 🔄 Contrast Therapy Protocol");
+              lines.push("");
+              lines.push(`**${result.contrast.name}**`);
+              lines.push(result.contrast.description);
+              lines.push("");
+              lines.push("**Sequence:**");
+              result.contrast.sequence.forEach((step, idx) => {
+                lines.push(`${idx + 1}. **${step.step}** - ${step.duration} at ${step.temperature}`);
+              });
+              lines.push("");
+              lines.push(`**Frequency:** ${result.contrast.frequency}`);
+              lines.push("");
+              lines.push("**Benefits:**");
+              result.contrast.benefits.forEach(benefit => {
+                lines.push(`- ${benefit}`);
+              });
+              lines.push("");
+              lines.push("---");
+              lines.push("");
+            }
+            
+            if (result.timingRecommendations && result.timingRecommendations.length > 0) {
+              lines.push("### ⏰ Timing Recommendations");
+              lines.push("");
+              result.timingRecommendations.forEach(rec => {
+                lines.push(`- ${rec}`);
+              });
+              lines.push("");
+              lines.push("---");
+              lines.push("");
+            }
+            
+            if (result.tips && result.tips.length > 0) {
+              lines.push("### 💡 Tips for Success");
+              lines.push("");
+              result.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "stressManagement") {
+            // Format stress management response
+            lines.push(`## 🧘 Stress Management Protocol`);
+            lines.push("");
+            
+            if (result.breathingExercises && result.breathingExercises.length > 0) {
+              lines.push("### 🌬️ Breathing Exercises");
+              lines.push("");
+              result.breathingExercises.forEach((exercise, idx) => {
+                lines.push(`#### ${idx + 1}. ${exercise.name}`);
+                lines.push(exercise.description);
+                lines.push("");
+                lines.push("**Steps:**");
+                exercise.steps.forEach(step => {
+                  lines.push(`- ${step}`);
+                });
+                lines.push("");
+                lines.push(`**Duration:** ${exercise.duration}`);
+                lines.push(`**Frequency:** ${exercise.frequency}`);
+                lines.push("");
+                lines.push("**Benefits:**");
+                exercise.benefits.forEach(benefit => {
+                  lines.push(`- ${benefit}`);
+                });
+                lines.push("");
+                lines.push(`**When to Use:** ${exercise.whenToUse}`);
+                lines.push("");
+                if (idx < result.breathingExercises.length - 1) {
+                  lines.push("---");
+                  lines.push("");
+                }
+              });
+            }
+            
+            if (result.meditation) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🧘 Meditation Protocol");
+              lines.push("");
+              lines.push(`**${result.meditation.name}**`);
+              lines.push(result.meditation.description);
+              lines.push("");
+              lines.push(`**Duration:** ${result.meditation.duration}`);
+              lines.push(`**Frequency:** ${result.meditation.frequency}`);
+              lines.push("");
+              lines.push("**Technique:**");
+              result.meditation.technique.forEach(step => {
+                lines.push(`- ${step}`);
+              });
+              lines.push("");
+              lines.push("**Benefits:**");
+              result.meditation.benefits.forEach(benefit => {
+                lines.push(`- ${benefit}`);
+              });
+              lines.push("");
+            }
+            
+            if (result.hrvProtocol) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 📊 HRV Optimization Protocol");
+              lines.push("");
+              lines.push(`**${result.hrvProtocol.name}**`);
+              lines.push(result.hrvProtocol.description);
+              lines.push("");
+              lines.push("**Exercises:**");
+              result.hrvProtocol.exercises.forEach((exercise, idx) => {
+                lines.push(`**${idx + 1}. ${exercise.name}** (${exercise.duration})`);
+                exercise.instructions.forEach(instruction => {
+                  lines.push(`- ${instruction}`);
+                });
+                lines.push("");
+              });
+              lines.push("**Tracking:**");
+              result.hrvProtocol.tracking.forEach(item => {
+                lines.push(`- ${item}`);
+              });
+              lines.push("");
+              lines.push("**Goals:**");
+              result.hrvProtocol.goals.forEach(goal => {
+                lines.push(`- ${goal}`);
+              });
+              lines.push("");
+            }
+            
+            if (result.adaptogens && result.adaptogens.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💊 Adaptogen Recommendations");
+              lines.push("");
+              result.adaptogens.forEach((adaptogen, idx) => {
+                lines.push(`**${idx + 1}. ${adaptogen.name}**`);
+                lines.push(`- **Dosage:** ${adaptogen.dosage}`);
+                lines.push(`- **Timing:** ${adaptogen.timing}`);
+                lines.push(`- **Purpose:** ${adaptogen.purpose}`);
+                if (adaptogen.notes) {
+                  lines.push(`- **Notes:** ${adaptogen.notes}`);
+                }
+                lines.push("");
+              });
+            }
+            
+            if (result.lifestyleRecommendations && result.lifestyleRecommendations.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💚 Lifestyle Recommendations");
+              lines.push("");
+              result.lifestyleRecommendations.forEach(rec => {
+                lines.push(`- ${rec}`);
+              });
+              lines.push("");
+            }
+            
+            if (result.dailyRoutine && result.dailyRoutine.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 📅 Suggested Daily Routine");
+              lines.push("");
+              result.dailyRoutine.forEach(item => {
+                lines.push(`- ${item}`);
+              });
+              lines.push("");
+            }
+            
+            if (result.tips && result.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Tips for Success");
+              lines.push("");
+              result.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "macroCalculator") {
+            // Format macro calculator response
+            lines.push(`## 📊 Macro Calculator Results`);
+            lines.push("");
+            lines.push(`**Goal:** ${result.goal.charAt(0).toUpperCase() + result.goal.slice(1).replace(/_/g, " ")}`);
+            lines.push(`**Activity Level:** ${result.activityLevel.charAt(0).toUpperCase() + result.activityLevel.slice(1).replace(/_/g, " ")}`);
+            lines.push(`**Dietary Preference:** ${result.dietaryPreference.charAt(0).toUpperCase() + result.dietaryPreference.slice(1).replace(/_/g, " ")}`);
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            lines.push("### 🔥 Daily Calorie Targets");
+            lines.push("");
+            lines.push(`**BMR (Basal Metabolic Rate):** ${result.bmr} calories/day`);
+            lines.push(`**TDEE (Total Daily Energy Expenditure):** ${result.tdee} calories/day`);
+            lines.push(`**Target Calories:** ${result.targetCalories} calories/day`);
+            if (result.deficitOrSurplus !== 0) {
+              const sign = result.deficitOrSurplus > 0 ? "+" : "";
+              lines.push(`**${result.deficitOrSurplus > 0 ? "Surplus" : "Deficit"}:** ${sign}${result.deficitOrSurplus} calories/day`);
+            }
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            lines.push("### 🥩 Daily Macronutrient Targets");
+            lines.push("");
+            lines.push(`**Protein:** ${result.macros.protein}g (${result.macroPercentages.protein}%)`);
+            lines.push(`**Carbohydrates:** ${result.macros.carbs}g (${result.macroPercentages.carbs}%)`);
+            lines.push(`**Fat:** ${result.macros.fat}g (${result.macroPercentages.fat}%)`);
+            lines.push(`**Total Calories:** ${result.macros.calories} kcal`);
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            lines.push("### 🍽️ Meal Distribution");
+            lines.push("");
+            result.mealDistribution.forEach((meal, idx) => {
+              lines.push(`**${meal.meal}**${meal.timing ? ` (${meal.timing})` : ""}`);
+              lines.push(`- Calories: ${meal.calories} kcal`);
+              lines.push(`- Protein: ${meal.protein}g`);
+              lines.push(`- Carbs: ${meal.carbs}g`);
+              lines.push(`- Fat: ${meal.fat}g`);
+              lines.push("");
+            });
+            
+            if (result.tips && result.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Tips for Success");
+              lines.push("");
+              result.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
+          } else if (tool.name === "recoveryOptimizer") {
+            // Format recovery optimizer response
+            lines.push(`## 💪 Recovery Optimization Protocol`);
+            lines.push("");
+            lines.push(`**Workout Type:** ${result.workoutType.charAt(0).toUpperCase() + result.workoutType.slice(1).replace(/_/g, " ")}`);
+            lines.push(`**Intensity:** ${result.intensity.charAt(0).toUpperCase() + result.intensity.slice(1).replace(/_/g, " ")}`);
+            lines.push(`**Recovery Time:** ${result.recoveryTime.charAt(0).toUpperCase() + result.recoveryTime.slice(1).replace(/_/g, " ")}`);
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            
+            if (result.protocols && result.protocols.length > 0) {
+              lines.push("### 📋 Recovery Protocols");
+              lines.push("");
+              result.protocols.forEach((protocol, idx) => {
+                lines.push(`#### ${idx + 1}. ${protocol.name}`);
+                lines.push(protocol.description);
+                lines.push(`**Duration:** ${protocol.duration}`);
+                lines.push("");
+                protocol.steps.forEach(step => {
+                  lines.push(`**${step.time} - ${step.action}**`);
+                  step.details.forEach(detail => {
+                    lines.push(`- ${detail}`);
+                  });
+                  lines.push("");
+                });
+                if (idx < result.protocols.length - 1) {
+                  lines.push("---");
+                  lines.push("");
+                }
+              });
+            }
+            
+            if (result.sleepOptimization) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 😴 Sleep Optimization for Recovery");
+              lines.push("");
+              lines.push(`**Target Duration:** ${result.sleepOptimization.duration}`);
+              lines.push(`**Timing:** ${result.sleepOptimization.timing}`);
+              lines.push("");
+              lines.push("**Recommendations:**");
+              result.sleepOptimization.recommendations.forEach(rec => {
+                lines.push(`- ${rec}`);
+              });
+              lines.push("");
+            }
+            
+            if (result.supplements && result.supplements.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💊 Recovery Supplements");
+              lines.push("");
+              result.supplements.forEach((supp, idx) => {
+                lines.push(`**${idx + 1}. ${supp.name}**`);
+                lines.push(`- **Dosage:** ${supp.dosage}`);
+                lines.push(`- **Timing:** ${supp.timing}`);
+                lines.push(`- **Purpose:** ${supp.purpose}`);
+                if (supp.notes) {
+                  lines.push(`- **Notes:** ${supp.notes}`);
+                }
+                lines.push("");
+              });
+            }
+            
+            if (result.activeRecovery && result.activeRecovery.activities.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🚶 Active Recovery Activities");
+              lines.push("");
+              result.activeRecovery.activities.forEach((activity, idx) => {
+                lines.push(`**${idx + 1}. ${activity.name}**`);
+                lines.push(`- **Duration:** ${activity.duration}`);
+                lines.push(`- **Intensity:** ${activity.intensity}`);
+                lines.push("**Benefits:**");
+                activity.benefits.forEach(benefit => {
+                  lines.push(`- ${benefit}`);
+                });
+                lines.push("");
+              });
+            }
+            
+            if (result.nutritionTiming && result.nutritionTiming.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 🍽️ Nutrition Timing Recommendations");
+              lines.push("");
+              result.nutritionTiming.forEach(rec => {
+                lines.push(`- ${rec}`);
+              });
+              lines.push("");
+            }
+            
+            if (result.tips && result.tips.length > 0) {
+              lines.push("---");
+              lines.push("");
+              lines.push("### 💡 Recovery Tips");
+              lines.push("");
+              result.tips.forEach(tip => {
+                lines.push(`- ${tip}`);
+              });
+              lines.push("");
+            }
           } else {
             // Generic tool response
             lines.push(JSON.stringify(result, null, 2));
@@ -612,6 +1161,29 @@ export async function POST(req: Request) {
           lines.push("---");
           lines.push("");
           lines.push("_Educational only. Not medical advice. Consult your healthcare provider before starting new supplements._");
+
+          // Track tool usage analytics (non-blocking)
+          try {
+            const { query } = await import("@/lib/db/client");
+            const userRecord = await query<{ id: string }>(
+              "SELECT id FROM users WHERE clerk_user_id = $1",
+              [userId || ""]
+            );
+            if (userRecord.length > 0) {
+              await query(
+                "INSERT INTO tool_usage (user_id, tool_name, input_data, output_data) VALUES ($1, $2, $3, $4)",
+                [
+                  userRecord[0].id,
+                  tool.name,
+                  JSON.stringify(parsed.data),
+                  JSON.stringify(result),
+                ]
+              );
+            }
+          } catch (dbError) {
+            // Ignore database errors - analytics is non-critical
+            logger.debug("Tool analytics tracking skipped", { error: dbError });
+          }
 
           logger.info("Chat API: Tool executed successfully", { 
             userId, 
@@ -641,23 +1213,129 @@ export async function POST(req: Request) {
     }
 
     // Default: LLM response using model router
-    // PRIMARY: Anthropic Claude 4.5 (as per architecture)
+    // PRIMARY: Anthropic Claude 3.5 Sonnet (as per architecture)
     // Fallback to OpenAI if Anthropic is not available
-    const provider = (process.env.AI_PROVIDER as "openai" | "anthropic") || "anthropic";
-    const text = await withTimeout(
-      runModel({
-        provider,
-        system: BIOFLO_SYSTEM_PROMPT,
-        messages: messages.slice(-20).map(m => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })),
-        timeout: AI_TIMEOUT_MS,
-        maxTokens: 2000,
-      }),
-      AI_TIMEOUT_MS,
-      "AI model request timeout"
-    );
+    let text: string;
+    let provider: "anthropic" | "openai" = (process.env.AI_PROVIDER as "openai" | "anthropic") || "anthropic";
+    
+    try {
+      text = await withTimeout(
+        runModel({
+          provider,
+          system: BIOFLO_SYSTEM_PROMPT,
+          messages: messages.slice(-20).map(m => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+          timeout: AI_TIMEOUT_MS,
+          maxTokens: 2000,
+        }),
+        AI_TIMEOUT_MS,
+        "AI model request timeout"
+      );
+    } catch (primaryError: unknown) {
+      // Check if it's a rate limit error from the API provider
+      const isApiRateLimit = primaryError instanceof Error && 
+        (primaryError.message.includes("Rate limit") || primaryError.message.includes("rate limit"));
+      
+      if (isApiRateLimit) {
+        logger.warn("API provider rate limit hit", { 
+          provider, 
+          error: primaryError, 
+          userId, 
+          requestId 
+        });
+        
+        // Fallback to OpenAI if Anthropic rate limited
+        if (provider === "anthropic" && process.env.OPENAI_API_KEY) {
+          logger.info("Anthropic rate limited, falling back to OpenAI", { userId, requestId });
+          try {
+            provider = "openai";
+            text = await withTimeout(
+              runModel({
+                provider: "openai",
+                system: BIOFLO_SYSTEM_PROMPT,
+                messages: messages.slice(-20).map(m => ({
+                  role: m.role as "user" | "assistant",
+                  content: m.content,
+                })),
+                timeout: AI_TIMEOUT_MS,
+                maxTokens: 2000,
+              }),
+              AI_TIMEOUT_MS,
+              "AI model request timeout"
+            );
+          } catch (fallbackError: unknown) {
+            // If both are rate limited, throw a clearer error
+            if (fallbackError instanceof Error && fallbackError.message.includes("Rate limit")) {
+              throw new Error("Both AI providers are rate limited. Please wait a few minutes and try again, or check your API key limits.");
+            }
+            logger.error("Both Anthropic and OpenAI failed", { primaryError, fallbackError, userId, requestId });
+            throw fallbackError;
+          }
+        } else {
+          // No fallback available, throw clearer error
+          throw new Error(`AI provider (${provider}) rate limit exceeded. This is from the API provider, not our system. Please wait a few minutes or check your API key limits.`);
+        }
+      } else {
+        // Other error, try fallback if available
+        if (provider === "anthropic" && process.env.OPENAI_API_KEY) {
+          logger.warn("Anthropic API failed, falling back to OpenAI", { error: primaryError, userId, requestId });
+          try {
+            provider = "openai";
+            text = await withTimeout(
+              runModel({
+                provider: "openai",
+                system: BIOFLO_SYSTEM_PROMPT,
+                messages: messages.slice(-20).map(m => ({
+                  role: m.role as "user" | "assistant",
+                  content: m.content,
+                })),
+                timeout: AI_TIMEOUT_MS,
+                maxTokens: 2000,
+              }),
+              AI_TIMEOUT_MS,
+              "AI model request timeout"
+            );
+          } catch (fallbackError: unknown) {
+            logger.error("Both Anthropic and OpenAI failed", { primaryError, fallbackError, userId, requestId });
+            throw fallbackError;
+          }
+        } else {
+          throw primaryError;
+        }
+      }
+    }
+    
+    // Save chat history (non-blocking)
+    const sessionIdForHistory = body.sessionId || crypto.randomUUID();
+    try {
+      const { query, queryOne } = await import("@/lib/db/client");
+      const userRecord = await queryOne<{ id: string }>(
+        "SELECT id FROM users WHERE clerk_user_id = $1",
+        [userId || ""]
+      );
+      if (userRecord) {
+        // Save all messages in the thread
+        for (const msg of [...messages, { role: "assistant" as const, content: text }]) {
+          await query(
+            `INSERT INTO chat_messages (user_id, thread_id, role, content, metadata)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT DO NOTHING`,
+            [
+              userRecord.id,
+              sessionIdForHistory,
+              msg.role,
+              msg.content,
+              JSON.stringify({ provider, model: provider === "anthropic" ? "claude-4-5" : "gpt-4o" }),
+            ]
+          );
+        }
+      }
+    } catch (dbError) {
+      // Ignore database errors - history saving is non-critical
+      logger.debug("Chat history save skipped", { error: dbError });
+    }
     
     logger.info("Chat API: Request completed", { 
       userId, 
@@ -667,7 +1345,7 @@ export async function POST(req: Request) {
     
     return Response.json({ 
       success: true,
-      data: { text },
+      data: { text, sessionId: sessionIdForHistory },
       requestId,
       timestamp: new Date().toISOString(),
     }, {
@@ -684,6 +1362,30 @@ export async function POST(req: Request) {
     const userId = authResult.userId;
     
     logger.error("Chat API error", e, userId);
+    
+    // Check if it's a rate limit error from API provider
+    const isRateLimitError = e instanceof Error && 
+      (e.message.includes("Rate limit") || e.message.includes("rate limit") || e.message.includes("429"));
+    
+    if (isRateLimitError) {
+      return createErrorResponse(
+        e instanceof Error ? e.message : "Rate limit exceeded. Please try again later.",
+        requestId,
+        429
+      );
+    }
+    
+    // Check if it's an API key error
+    const isApiKeyError = e instanceof Error && 
+      (e.message.includes("API key") || e.message.includes("MISSING_API_KEY") || e.message.includes("AUTH_ERROR"));
+    
+    if (isApiKeyError) {
+      return createErrorResponse(
+        "AI API key is missing or invalid. Please check your ANTHROPIC_API_KEY or OPENAI_API_KEY in .env.local",
+        requestId,
+        500
+      );
+    }
     
     const errorMessage = e instanceof Error && process.env.NODE_ENV === "development" 
       ? e.message 

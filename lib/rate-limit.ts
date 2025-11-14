@@ -8,6 +8,16 @@ interface RateLimitEntry {
 
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
+// Export function to clear rate limit store (useful for testing)
+export function clearRateLimitStore(): void {
+  rateLimitStore.clear();
+}
+
+// Export function to get current rate limit status
+export function getRateLimitStatus(identifier: string): RateLimitEntry | null {
+  return rateLimitStore.get(identifier) || null;
+}
+
 export interface RateLimitConfig {
   windowMs: number; // Time window in milliseconds
   maxRequests: number; // Maximum requests per window

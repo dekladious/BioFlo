@@ -18,7 +18,7 @@ export type RunModelArgs = {
 // Default models (latest stable versions)
 export const DEFAULT_MODELS = {
   openai: "gpt-4o", // Latest GPT-4o model
-  anthropic: "claude-sonnet-4-5", // Latest Claude Sonnet 4.5
+  anthropic: "claude-sonnet-4-20250514", // Claude Sonnet 4 (latest)
 } as const;
 
 // Custom error classes for better error handling
@@ -146,6 +146,9 @@ async function runAnthropic({
   const client = new Anthropic({ 
     apiKey,
     timeoutMs: timeout,
+    defaultHeaders: {
+      "anthropic-version": "2023-06-01", // Required API version header
+    },
   });
 
   try {
@@ -181,13 +184,21 @@ async function runAnthropic({
 
     return text;
   } catch (error: unknown) {
+    // Log the actual error for debugging
+    logger.error("Anthropic API call failed", { error, model: model ?? DEFAULT_MODELS.anthropic });
+    
     if (error instanceof Error) {
-      if (error.message.includes("rate limit")) {
+      // Check for specific Anthropic error types
+      if (error.message.includes("rate limit") || error.message.includes("429")) {
         throw new ModelError("Rate limit exceeded. Please try again later.", "anthropic", "RATE_LIMIT", 429);
       }
-      if (error.message.includes("authentication") || error.message.includes("401")) {
-        throw new ModelError("Invalid API key", "anthropic", "AUTH_ERROR", 401);
+      if (error.message.includes("authentication") || error.message.includes("401") || error.message.includes("Invalid API key")) {
+        throw new ModelError("Invalid API key. Please check your ANTHROPIC_API_KEY in .env.local", "anthropic", "AUTH_ERROR", 401);
       }
+      if (error.message.includes("model") || error.message.includes("not found")) {
+        throw new ModelError(`Model not found: ${model ?? DEFAULT_MODELS.anthropic}. Please check the model name.`, "anthropic", "MODEL_ERROR", 400);
+      }
+      // Re-throw with more context
       throw new ModelError(
         `Anthropic API error: ${error.message}`,
         "anthropic",

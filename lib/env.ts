@@ -6,17 +6,18 @@ interface EnvConfig {
 }
 
 const requiredEnvVars = [
-  "OPENAI_API_KEY",
   "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
+] as const;
+
+const optionalEnvVars = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
   "STRIPE_SECRET_KEY",
   "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
   "STRIPE_PRICE_ID",
   "STRIPE_WEBHOOK_SECRET",
   "APP_BASE_URL",
-] as const;
-
-const optionalEnvVars = [
   "CLERK_SIGN_IN_URL",
   "CLERK_SIGN_UP_URL",
   "STRIPE_BILLING_PORTAL_URL",

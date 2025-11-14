@@ -1,336 +1,675 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Send, Plus, Cog, Sparkles, Clock, Copy, Check, Download, Trash2, Folder, ChevronRight } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
+import { exportAsText, formatForExport } from "@/lib/utils/export";
 
-type Msg = { 
-  role: "user" | "assistant"; 
-  content: string;
-  timestamp?: string;
-  error?: boolean;
-};
+type Msg = { role: "user" | "assistant"; content: string };
+type Thread = { id: string; title: string; createdAt: number; preview?: string; messages: Msg[]; folderId?: string | null };
+type Folder = { id: string; name: string; createdAt: number };
+
+function ThreadItem({
+  thread,
+  isActive,
+  onSelect,
+  onDelete,
+  onRename,
+  onMoveToFolder,
+  folders,
+}: {
+  thread: Thread;
+  isActive: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onRename: (newName: string) => void;
+  onMoveToFolder: (folderId: string | null) => void;
+  folders: Folder[];
+}) {
+  const [showMenu, setShowMenu] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(thread.title);
+
+  function handleRename() {
+    if (editName.trim() && editName.trim() !== thread.title) {
+      onRename(editName.trim());
+    }
+    setIsEditing(false);
+    setShowMenu(false);
+  }
+
+  return (
+    <div className="group relative">
+      {isEditing ? (
+        <input
+          value={editName}
+          onChange={(e) => setEditName(e.target.value)}
+          onBlur={handleRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              handleRename();
+            } else if (e.key === "Escape") {
+              setIsEditing(false);
+              setEditName(thread.title);
+              setShowMenu(false);
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-full bg-black/20 border border-white/15 rounded-lg px-2 py-2 text-xs text-white focus:outline-none"
+          autoFocus
+        />
+      ) : (
+        <>
+          <button
+            onClick={onSelect}
+            className={`w-full text-left px-2 py-2 rounded-lg text-xs transition ${
+              isActive
+                ? "bg-white/12 text-white"
+                : "text-slate-300 hover:bg-white/6 hover:text-white"
+            }`}
+          >
+            <div className="font-medium truncate">{thread.title}</div>
+            {thread.preview && <div className="text-[10px] text-slate-400 truncate mt-0.5">{thread.preview}</div>}
+          </button>
+          <div className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 transition">
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowMenu(!showMenu);
+                }}
+                className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
+              >
+                <Cog className="size-3" />
+              </button>
+              {showMenu && (
+                <div className="absolute right-0 top-6 z-10 w-48 rounded-lg border border-white/10 bg-white/[0.08] backdrop-blur shadow-lg p-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsEditing(true);
+                      setEditName(thread.title);
+                      setShowMenu(false);
+                    }}
+                    className="w-full text-left px-2 py-1.5 rounded text-xs text-slate-300 hover:bg-white/10 flex items-center gap-2"
+                  >
+                    <Cog className="size-3" /> Rename
+                  </button>
+                  <div className="border-t border-white/10 my-1" />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMenu(false);
+                      onDelete();
+                    }}
+                    className="w-full text-left px-2 py-1.5 rounded text-xs text-red-400 hover:bg-red-500/20 flex items-center gap-2"
+                  >
+                    <Trash2 className="size-3" /> Delete
+                  </button>
+                  <div className="border-t border-white/10 my-1" />
+                  <div className="px-2 py-1 text-[10px] text-slate-400">Move to folder:</div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMenu(false);
+                      onMoveToFolder(null);
+                    }}
+                    className="w-full text-left px-2 py-1 rounded text-xs text-slate-300 hover:bg-white/10"
+                  >
+                    Uncategorized
+                  </button>
+                  {folders.map((folder) => (
+                    <button
+                      key={folder.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowMenu(false);
+                        onMoveToFolder(folder.id);
+                      }}
+                      className="w-full text-left px-2 py-1 rounded text-xs text-slate-300 hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <Folder className="size-3" /> {folder.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MessageWithCopy({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  
+  function handleCopy() {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+  
+  function handleExport() {
+    const formatted = formatForExport(content);
+    const timestamp = new Date().toISOString().split("T")[0];
+    exportAsText(formatted, `bioflo-export-${timestamp}.txt`);
+  }
+  
+  return (
+    <div className="group relative">
+      <div className="prose prose-invert prose-sm max-w-none prose-headings:text-slate-100 prose-p:text-slate-200 prose-strong:text-slate-100 prose-ul:text-slate-200 prose-ol:text-slate-200 prose-li:text-slate-200 prose-a:text-sky-400 prose-code:text-slate-300 prose-pre:bg-slate-900 prose-pre:text-slate-100">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+      <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <button
+          onClick={handleCopy}
+          className="rounded-lg p-1.5 bg-white/10 hover:bg-white/20 border border-white/10 transition"
+          title="Copy message"
+        >
+          {copied ? (
+            <Check className="size-3.5 text-emerald-400" />
+          ) : (
+            <Copy className="size-3.5 text-slate-300" />
+          )}
+        </button>
+        <button
+          onClick={handleExport}
+          className="rounded-lg p-1.5 bg-white/10 hover:bg-white/20 border border-white/10 transition"
+          title="Export as text file"
+        >
+          <Download className="size-3.5 text-slate-300" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const pane =
+  "rounded-[16px] border border-white/10 bg-white/[0.045] backdrop-blur shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_30px_rgba(0,0,0,0.25)]";
 
 export default function ChatInterface() {
-  const [messages, setMessages] = useState<Msg[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("bioflo-chat-messages");
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          return parsed.slice(-50);
-        } catch {
-          return [];
-        }
-      }
-    }
-    return [];
-  });
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<number | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [editingFolder, setEditingFolder] = useState<string | null>(null);
+  const [folderName, setFolderName] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && messages.length > 0) {
-      const timeoutId = setTimeout(() => {
-        localStorage.setItem("bioflo-chat-messages", JSON.stringify(messages));
-      }, 500);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [messages]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
+
+  // Load threads and folders from localStorage on mount
+  useEffect(() => {
+    try {
+      const storedThreads = localStorage.getItem("bioflo-threads");
+      if (storedThreads) {
+        const parsed = JSON.parse(storedThreads);
+        setThreads(parsed);
+        // Try to load from database if available
+        fetch("/api/chat/history?threadId=" + (parsed[0]?.id || ""))
+          .then(r => r.json())
+          .then(data => {
+            if (data.success && data.data?.messages?.length > 0) {
+              // Update thread with database messages if available
+              const dbThread = { id: parsed[0]?.id, title: parsed[0]?.title, createdAt: parsed[0]?.createdAt, messages: data.data.messages, folderId: parsed[0]?.folderId };
+              setThreads([dbThread, ...parsed.slice(1)]);
+            }
+          })
+          .catch(() => {
+            // Database not available, use localStorage only
+          });
+      }
+      
+      const storedFolders = localStorage.getItem("bioflo-folders");
+      if (storedFolders) {
+        const parsed = JSON.parse(storedFolders);
+        setFolders(parsed);
+        // Expand all folders by default
+        setExpandedFolders(new Set(parsed.map((f: Folder) => f.id)));
+      }
+    } catch (e) {
+      console.warn("Failed to load from localStorage", e);
+    }
+  }, []);
+
+  // Save threads to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem("bioflo-threads", JSON.stringify(threads));
+    } catch (e) {
+      console.warn("Failed to save threads to localStorage", e);
+    }
+  }, [threads]);
+
+  // Save folders to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem("bioflo-folders", JSON.stringify(folders));
+    } catch (e) {
+      console.warn("Failed to save folders to localStorage", e);
+    }
+  }, [folders]);
+
+  function newThread() {
+    setMessages([]);
+    setSessionId(null);
+    setInput("");
+  }
+
+  function deleteThread(threadId: string) {
+    if (confirm("Are you sure you want to delete this chat?")) {
+      setThreads((t) => t.filter((thread) => thread.id !== threadId));
+      if (sessionId === threadId) {
+        newThread();
+      }
+      // Also delete from database (non-blocking)
+      fetch(`/api/chat/history?threadId=${threadId}`, { method: "DELETE" }).catch(() => {});
+    }
+  }
+
+  function createFolder() {
+    const newFolder: Folder = {
+      id: crypto.randomUUID(),
+      name: "New Folder",
+      createdAt: Date.now(),
+    };
+    setFolders((f) => [...f, newFolder]);
+    setEditingFolder(newFolder.id);
+    setFolderName("New Folder");
+  }
+
+  function renameFolder(folderId: string, newName: string) {
+    if (newName.trim()) {
+      setFolders((f) => f.map((folder) => (folder.id === folderId ? { ...folder, name: newName.trim() } : folder)));
+    }
+    setEditingFolder(null);
+    setFolderName("");
+  }
+
+  function deleteFolder(folderId: string) {
+    if (confirm("Delete this folder? Chats will be moved to uncategorized.")) {
+      setFolders((f) => f.filter((folder) => folder.id !== folderId));
+      setThreads((t) => t.map((thread) => (thread.folderId === folderId ? { ...thread, folderId: null } : thread)));
+      setExpandedFolders((expanded) => {
+        const newSet = new Set(expanded);
+        newSet.delete(folderId);
+        return newSet;
+      });
+    }
+  }
+
+  function toggleFolder(folderId: string) {
+    setExpandedFolders((expanded) => {
+      const newSet = new Set(expanded);
+      if (newSet.has(folderId)) {
+        newSet.delete(folderId);
+      } else {
+        newSet.add(folderId);
+      }
+      return newSet;
+    });
+  }
+
+  function moveThreadToFolder(threadId: string, folderId: string | null) {
+    setThreads((t) => t.map((thread) => (thread.id === threadId ? { ...thread, folderId } : thread)));
+  }
+
+  function renameThread(threadId: string, newName: string) {
+    if (newName.trim()) {
+      setThreads((t) => t.map((thread) => (thread.id === threadId ? { ...thread, title: newName.trim() } : thread)));
+    }
+  }
 
   async function send() {
     if (!input.trim() || loading) return;
-    
-    const userMessage: Msg = { 
-      role: "user", 
-      content: input.trim(),
-      timestamp: new Date().toISOString(),
-    };
-    const next = [...messages, userMessage];
-    setMessages(next); 
+    const next = [...messages, { role: "user", content: input.trim() } as Msg];
+    setMessages(next);
     setInput("");
     setLoading(true);
-    setError(null);
-    
     try {
-      const res = await fetch("/api/chat", {
+      const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next })
+        body: JSON.stringify({ messages: next, sessionId }),
       });
-      
-      const data = await res.json();
-      
-      if (!res.ok) {
-        const errorMsg = data.error || `HTTP error! status: ${res.status}`;
+      if (r.status === 401) return (window.location.href = "/sign-in");
+      if (r.status === 402) return (window.location.href = "/subscribe");
+      if (!r.ok) {
+        const errorData = await r.json().catch(() => ({}));
+        const errorMsg = errorData.error || errorData.message || `HTTP ${r.status}: ${r.statusText}`;
+        
+        // Log full error details for debugging
+        console.error("API Error:", {
+          status: r.status,
+          statusText: r.statusText,
+          error: errorData,
+        });
+        
+        if (r.status === 429) {
+          // Rate limit error
+          console.warn("Rate limit hit. To fix:", {
+            method1: "Add DISABLE_RATE_LIMIT=true to .env.local and restart server",
+            method2: "Restart dev server to clear rate limit store",
+            method3: "Wait 5 minutes for rate limit to reset",
+          });
+        }
+        
         throw new Error(errorMsg);
       }
+      const data = await r.json();
+      console.log("API Response:", data); // Debug log
+      if (data.sessionId && !sessionId) setSessionId(data.sessionId);
+      const reply = data.data?.text ?? data.text ?? data.message ?? "No response";
+      if (reply === "No response") {
+        console.error("No response from API:", data);
+      }
+              const full = [...next, { role: "assistant", content: reply } as Msg];
+      setMessages(full);
+      const title = next[0]?.content?.slice(0, 36) || "New chat";
+      const threadId = data.sessionId ?? sessionId ?? crypto.randomUUID();
+      const updated: Thread = { id: threadId, title, createdAt: Date.now(), preview: reply.slice(0, 60), messages: full, folderId: null };
+      setThreads((t) => {
+        const rest = t.filter((x) => x.id !== threadId);
+        return [updated, ...rest].slice(0, 40);
+      });
       
-      const text = data.data?.text || data.text || "No response";
-      setMessages([...next, { 
-        role: "assistant", 
-        content: text,
-        timestamp: new Date().toISOString(),
-      }]);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to get response. Please try again.";
-      setError(errorMessage);
-      setMessages([...next, { 
-        role: "assistant", 
-        content: `**Error:** ${errorMessage}\n\nPlease try again or check your connection.`,
-        timestamp: new Date().toISOString(),
-        error: true,
-      }]);
+      // Save to database (non-blocking)
+      fetch("/api/chat/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId,
+          messages: full,
+        }),
+      }).catch(() => {
+        // Ignore errors - database save is non-critical
+      });
+    } catch (error) {
+      console.error("Chat error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Error calling API. Please check the console for details.";
+      setMessages((m) => [...m, { role: "assistant", content: `Error: ${errorMessage}` }]);
     } finally {
       setLoading(false);
     }
   }
 
-  function formatTime(timestamp?: string) {
-    if (!timestamp) return "";
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
-
-  async function copyToClipboard(text: string, index: number) {
-    await navigator.clipboard.writeText(text);
-    setCopied(index);
-    setTimeout(() => setCopied(null), 2000);
-  }
-
   const suggestions = [
-    "Plan a 2500 kcal pescatarian day",
-    "Recommend supplements for sleep",
-    "Create a longevity protocol",
+    "Plan a 2,500 kcal pescatarian day (no nuts)",
+    "Create a fasting protocol for weight loss",
+    "Calculate my macros for muscle gain, 75kg",
     "Optimize my sleep schedule",
+    "Recommend supplements for longevity",
+    "Design a cold plunge protocol",
+    "Help me manage stress and anxiety",
+    "Create a recovery protocol after strength training",
   ];
 
   return (
-    <div className="flex flex-col h-full max-h-[calc(100vh-12rem)]">
-      {/* Chat Messages Area */}
-      <div className="flex-1 overflow-y-auto mb-4">
-        <div className="space-y-4 px-1">
-          {messages.length === 0 && (
-            <div className="text-center py-12">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 mb-4 shadow-lg">
-                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">
-                Welcome to BioFlo
-              </h3>
-              <p className="text-sm text-slate-600 mb-6 max-w-md mx-auto">
-                Your elite biohacking personal assistant. Get personalized protocols, supplements, and optimization strategies.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl mx-auto">
-                {suggestions.map((suggestion, i) => (
+    <div className="w-full grid gap-4
+                grid-cols-1
+                md:grid-cols-[240px_minmax(1000px,1fr)_280px]">
+      {/* SIDEBAR */}
+      <aside className={`${pane} p-3 h-[72vh] flex flex-col`}>
+        <div className="flex items-center justify-between mb-2 px-1">
+          <div className="font-medium tracking-tight">BioFlo</div>
+          <button
+            onClick={newThread}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg
+                       bg-gradient-to-r from-sky-400 to-emerald-400 text-black text-xs font-medium
+                       shadow-[0_8px_18px_rgba(56,189,248,0.28)] hover:brightness-110 transition"
+          >
+            <Plus className="size-3" /> New
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between px-1 mb-1">
+          <div className="text-[11px] text-slate-400 flex items-center gap-1">
+            <Clock className="size-3" /> Chats
+          </div>
+          <button
+            onClick={createFolder}
+            className="text-[10px] text-slate-400 hover:text-white transition px-1.5 py-0.5 rounded hover:bg-white/5"
+            title="Create folder"
+          >
+            + Folder
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto mt-1 space-y-1 pr-1">
+          {/* Folders */}
+          {folders.map((folder) => {
+            const folderThreads = threads.filter((t) => t.folderId === folder.id);
+            const isExpanded = expandedFolders.has(folder.id);
+            const isEditing = editingFolder === folder.id;
+
+            return (
+              <div key={folder.id} className="mb-1">
+                <div className="flex items-center gap-1 group">
                   <button
-                    key={i}
-                    onClick={() => setInput(suggestion)}
-                    className="px-4 py-2.5 text-sm text-left bg-white/60 hover:bg-white/80 border border-slate-200 rounded-xl transition-all duration-200 hover:shadow-md hover:scale-[1.02]"
+                    onClick={() => toggleFolder(folder.id)}
+                    className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-white/6 hover:text-white transition"
                   >
-                    {suggestion}
+                    <ChevronRight className={`size-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                    {isEditing ? (
+                      <input
+                        value={folderName}
+                        onChange={(e) => setFolderName(e.target.value)}
+                        onBlur={() => renameFolder(folder.id, folderName)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            renameFolder(folder.id, folderName);
+                          } else if (e.key === "Escape") {
+                            setEditingFolder(null);
+                            setFolderName("");
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1 bg-black/20 border border-white/15 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none"
+                        autoFocus
+                      />
+                    ) : (
+                      <>
+                        <Folder className="size-3" />
+                        <span className="flex-1 truncate">{folder.name}</span>
+                        <span className="text-[10px] text-slate-500">({folderThreads.length})</span>
+                      </>
+                    )}
                   </button>
-                ))}
+                  {!isEditing && (
+                    <div className="opacity-0 group-hover:opacity-100 flex gap-0.5 transition">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingFolder(folder.id);
+                          setFolderName(folder.name);
+                        }}
+                        className="p-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white"
+                        title="Rename folder"
+                      >
+                        <Cog className="size-3" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteFolder(folder.id);
+                        }}
+                        className="p-0.5 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400"
+                        title="Delete folder"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {isExpanded && (
+                  <div className="ml-4 mt-0.5 space-y-0.5">
+                    {folderThreads.map((t) => (
+                      <ThreadItem
+                        key={t.id}
+                        thread={t}
+                        isActive={sessionId === t.id}
+                        onSelect={async () => {
+                          setMessages(t.messages);
+                          setSessionId(t.id);
+                          try {
+                            const res = await fetch(`/api/chat/history?threadId=${t.id}`);
+                            const data = await res.json();
+                            if (data.success && data.data?.messages?.length > 0) {
+                              setMessages(data.data.messages);
+                            }
+                          } catch (e) {
+                            // Use localStorage messages if DB fails
+                          }
+                        }}
+                        onDelete={() => deleteThread(t.id)}
+                        onRename={(newName) => renameThread(t.id, newName)}
+                        onMoveToFolder={(folderId) => moveThreadToFolder(t.id, folderId)}
+                        folders={folders}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
+            );
+          })}
+
+          {/* Uncategorized threads */}
+          {threads.filter((t) => !t.folderId || !folders.find((f) => f.id === t.folderId)).length > 0 && (
+            <div className="mt-2">
+              <div className="text-[10px] text-slate-500 px-2 mb-1">Uncategorized</div>
+              {threads
+                .filter((t) => !t.folderId || !folders.find((f) => f.id === t.folderId))
+                .map((t) => (
+                  <ThreadItem
+                    key={t.id}
+                    thread={t}
+                    isActive={sessionId === t.id}
+                    onSelect={async () => {
+                      setMessages(t.messages);
+                      setSessionId(t.id);
+                      try {
+                        const res = await fetch(`/api/chat/history?threadId=${t.id}`);
+                        const data = await res.json();
+                        if (data.success && data.data?.messages?.length > 0) {
+                          setMessages(data.data.messages);
+                        }
+                      } catch (e) {
+                        // Use localStorage messages if DB fails
+                      }
+                    }}
+                    onDelete={() => deleteThread(t.id)}
+                    onRename={(newName) => renameThread(t.id, newName)}
+                    onMoveToFolder={(folderId) => moveThreadToFolder(t.id, folderId)}
+                    folders={folders}
+                  />
+                ))}
             </div>
           )}
-          
-          {messages.map((m, i) => (
-            <div 
-              key={i} 
-              className={`message-enter flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}
+
+          {threads.length === 0 && (
+            <div className="px-2 py-4 text-xs text-slate-500 text-center">No chats yet</div>
+          )}
+        </div>
+
+        <div className="mt-2 p-2 rounded-lg border border-white/10 text-xs text-slate-300">
+          <div className="flex items-center gap-2">
+            <Cog className="size-3" /> Tools
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">
+            Meal planner, sleep tuner & more (coming soon).
+          </p>
+        </div>
+      </aside>
+
+      {/* CONVERSATION */}
+      <section className={`${pane} h-[72vh] flex flex-col`}>
+        {/* suggestion pills */}
+        <div className="p-3 border-b border-white/10 flex items-center gap-2 overflow-x-auto">
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              onClick={() => setInput(s)}
+              className="text-xs px-3 py-1.5 rounded-xl border border-white/10 hover:bg-white/5 whitespace-nowrap"
             >
-              <div className={`group relative max-w-[85%] sm:max-w-[75%] ${
-                m.role === "user" 
-                  ? "bg-gradient-to-br from-violet-600 to-purple-600 text-white rounded-2xl rounded-tr-sm shadow-lg" 
-                  : m.error
-                  ? "bg-red-50 text-red-900 border-2 border-red-200 rounded-2xl rounded-tl-sm"
-                  : "glass rounded-2xl rounded-tl-sm shadow-lg border border-slate-200/50"
-              } px-5 py-4`}>
-                {m.role === "assistant" && !m.error && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                      <span className="text-white text-xs font-bold">BF</span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-700">BioFlo</span>
-                    {m.timestamp && (
-                      <span className="text-xs text-slate-500 ml-auto">
-                        {formatTime(m.timestamp)}
-                      </span>
-                    )}
-                  </div>
-                )}
-                
-                {m.role === "user" && (
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium opacity-90">You</span>
-                    {m.timestamp && (
-                      <span className="text-xs opacity-70 ml-3">
-                        {formatTime(m.timestamp)}
-                      </span>
-                    )}
-                  </div>
-                )}
-                
+              <Sparkles className="inline size-3 mr-1" />
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {/* messages */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.length === 0 && (
+            <div className="grid place-items-center h-full text-slate-400 text-sm">
+              Ask anything to get started.
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={m.role === "user" ? "text-right" : ""}>
+              <div
+                className={`inline-block max-w-[92%] md:max-w-[70%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
+                  m.role === "user"
+                    ? "bg-gradient-to-r from-sky-400 to-emerald-400 text-black shadow-[0_8px_18px_rgba(56,189,248,0.28)]"
+                    : "bg-white/[0.06] border border-white/10"
+                }`}
+              >
                 {m.role === "assistant" ? (
-                  <div className="prose prose-sm max-w-none prose-headings:mt-0 prose-headings:mb-2">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeHighlight]}
-                      components={{
-                        p: ({ children }) => <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>,
-                        ul: ({ children }) => <ul className="list-disc list-outside mb-3 space-y-1.5 ml-4">{children}</ul>,
-                        ol: ({ children }) => <ol className="list-decimal list-outside mb-3 space-y-1.5 ml-4">{children}</ol>,
-                        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-                        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                        em: ({ children }) => <em className="italic">{children}</em>,
-                        code: ({ inline, className, children, ...props }) => {
-                          return inline ? (
-                            <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono text-violet-700" {...props}>
-                              {children}
-                            </code>
-                          ) : (
-                            <code className={`block bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto text-xs ${className || ""}`} {...props}>
-                              {children}
-                            </code>
-                          );
-                        },
-                        pre: ({ children }) => <pre className="mb-3">{children}</pre>,
-                        h1: ({ children }) => <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0">{children}</h1>,
-                        h2: ({ children }) => <h2 className="text-lg font-semibold mb-2 mt-4 first:mt-0">{children}</h2>,
-                        h3: ({ children }) => <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0">{children}</h3>,
-                        blockquote: ({ children }) => <blockquote className="border-l-4 border-violet-400 pl-4 italic my-3 text-slate-700">{children}</blockquote>,
-                        hr: () => <hr className="my-4 border-slate-200" />,
-                      }}
-                    >
-                      {m.content}
-                    </ReactMarkdown>
-                  </div>
+                  <MessageWithCopy content={m.content} />
                 ) : (
-                  <div className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</div>
-                )}
-                
-                {m.role === "assistant" && !m.error && (
-                  <button
-                    onClick={() => copyToClipboard(m.content, i)}
-                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-slate-100/50 text-slate-500 hover:text-slate-700"
-                    title="Copy to clipboard"
-                  >
-                    {copied === i ? (
-                      <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    )}
-                  </button>
+                  m.content
                 )}
               </div>
             </div>
           ))}
-          
           {loading && (
-            <div className="flex items-center gap-3 text-slate-600">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                <span className="text-white text-xs font-bold">BF</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 bg-violet-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
-                <div className="w-2 h-2 bg-violet-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
-                <div className="w-2 h-2 bg-violet-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
-              </div>
-              <span className="text-sm ml-2">BioFlo is thinking...</span>
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <Loader2 className="size-4 animate-spin" /> Thinking…
             </div>
           )}
-          
-          {error && (
-            <div className="bg-red-50 border-2 border-red-200 text-red-900 px-4 py-3 rounded-xl shadow-sm">
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-sm font-medium">{error}</span>
-              </div>
-            </div>
-          )}
-          
-          <div ref={messagesEndRef} />
         </div>
-      </div>
 
-      {/* Input Area */}
-      <div className="border-t border-slate-200 pt-4">
-        <div className="relative flex items-end gap-3">
-          <div className="flex-1 relative">
-            <textarea
-              ref={inputRef}
+        {/* composer */}
+        <div className="p-3 border-t border-white/10">
+          <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-2xl px-3 py-2">
+            <input
+              className="flex-1 bg-transparent outline-none text-sm"
+              placeholder="Send a message…"
               value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                e.target.style.height = "auto";
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              placeholder="Ask BioFlo anything... (Shift+Enter for new line)"
-              className="w-full px-4 py-3 pr-12 bg-white/80 backdrop-blur-sm border-2 border-slate-200 rounded-2xl focus:outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-500/10 transition-all duration-200 resize-none text-sm placeholder:text-slate-400 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={loading}
-              maxLength={10000}
-              rows={1}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
             />
-            <div className="absolute bottom-2 right-2 text-xs text-slate-400">
-              {input.length}/10000
-            </div>
+            <button
+              onClick={send}
+              disabled={loading || !input.trim()}
+              className="size-9 grid place-items-center rounded-xl bg-white text-black disabled:opacity-50"
+              title="Send"
+            >
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+            </button>
           </div>
-          <button 
-            onClick={send} 
-            disabled={loading || !input.trim()} 
-            className="px-6 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-2xl font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:from-violet-700 hover:to-purple-700 active:scale-95 transition-all duration-200 shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 flex items-center gap-2 min-w-[100px] justify-center"
-          >
-            {loading ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                <span>Sending</span>
-              </>
-            ) : (
-              <>
-                <span>Send</span>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                </svg>
-              </>
-            )}
-          </button>
+          <div className="mt-2 text-[11px] text-slate-500 text-center">
+            Educational only · Not medical advice
+          </div>
         </div>
-        <div className="flex items-center justify-between mt-3 text-xs text-slate-500">
-          <p className="flex items-center gap-1">
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            Educational only. Not medical advice.
+      </section>
+
+      {/* TOOLS PANEL */}
+      <aside className={`${pane} hidden md:flex p-4 h-[72vh]`}>
+        <div className="text-sm text-slate-300">
+          <div className="font-medium">Tools</div>
+          <p className="text-slate-400 text-xs mt-1">
+            When the agent triggers a tool (e.g., meal planner), we'll show inputs/outputs here.
           </p>
-          {messages.length > 0 && (
-            <p className="text-slate-400">{messages.length} {messages.length === 1 ? "message" : "messages"}</p>
-          )}
         </div>
-      </div>
+      </aside>
     </div>
   );
 }

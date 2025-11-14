@@ -60,7 +60,7 @@ export const sleepOptimizer = registerTool({
     }).optional(),
     goals: z.array(z.enum(["better_sleep", "energy", "performance", "recovery"])).default(["better_sleep"]),
   }),
-  async handler({ currentSleepSchedule, workSchedule, lightExposure, goals }) {
+  async handler({ currentSleepSchedule, workSchedule, lightExposure: lightExposureInput, goals }) {
     // Parse current schedule
     const currentBedtime = currentSleepSchedule?.bedtime || "22:30";
     const currentWakeTime = currentSleepSchedule?.wakeTime || "06:30";
@@ -211,7 +211,7 @@ export const sleepOptimizer = registerTool({
     }
 
     // Light exposure recommendations
-    const lightExposure = {
+    const lightExposureRecs = {
       morning: currentSleepSchedule?.bedtime 
         ? "View bright light (sunlight or 10,000 lux device) for 5-10 minutes within 1 hour of waking. This sets your circadian clock."
         : "Get 5-10 minutes of bright light exposure within 1 hour of waking",
@@ -281,7 +281,7 @@ export const sleepOptimizer = registerTool({
       optimalWakeTime,
       totalSleepHours: targetHours,
       protocols,
-      lightExposure,
+      lightExposure: lightExposureRecs,
       temperature,
       environment,
       tips,

@@ -228,6 +228,39 @@ export const mealPlanner = registerTool({
         "Consider meal prepping for easier adherence",
         "Track your macros using a food scale for accuracy",
       ],
+      // Enhanced: Fasting window recommendations
+      fastingRecommendations: dietaryPrefs.includes("keto") || calories < 1800
+        ? {
+            suggestedProtocol: "16:8 Intermittent Fasting",
+            eatingWindow: "12:00 PM - 8:00 PM",
+            fastingWindow: "8:00 PM - 12:00 PM (next day)",
+            benefits: [
+              "Improved insulin sensitivity",
+              "Enhanced fat burning",
+              "Better metabolic flexibility",
+            ],
+            notes: "This meal plan works well with a 16:8 fasting protocol. Adjust meal timing to fit your eating window.",
+          }
+        : calories < 2500
+        ? {
+            suggestedProtocol: "14:10 Intermittent Fasting",
+            eatingWindow: "10:00 AM - 8:00 PM",
+            fastingWindow: "8:00 PM - 10:00 AM (next day)",
+            benefits: [
+              "Metabolic benefits",
+              "Improved digestion",
+              "Better sleep quality",
+            ],
+            notes: "Optional fasting protocol. You can eat normally if preferred.",
+          }
+        : null,
+      // Enhanced: Electrolyte recommendations
+      electrolyteRecommendations: {
+        sodium: "2,000-3,000 mg per day (add 1/8 tsp pink Himalayan salt to water if needed)",
+        potassium: "2,000-3,000 mg per day (from foods: bananas, avocados, leafy greens, or supplement)",
+        magnesium: "400-600 mg per day (magnesium glycinate before bed, or from foods: nuts, seeds, dark chocolate)",
+        notes: "Especially important if you're doing intermittent fasting, low-carb, or high-intensity training.",
+      },
     };
   }
 });

@@ -19,7 +19,7 @@ export const STRIPE = {
 export const RATE_LIMITS = {
   CHAT: {
     windowMs: 5 * 60 * 1000, // 5 minutes
-    maxRequests: 20,
+    maxRequests: process.env.NODE_ENV === "development" ? 100 : 20, // More lenient in dev
   },
 } as const;
 
