@@ -328,74 +328,173 @@ export default function ChatInterface() {
     }
   }
 
+  function upsertThread(threadId: string, finalMessages: Msg[], preview: string) {
+    const title = finalMessages[0]?.content?.slice(0, 36) || "New chat";
+    const updated: Thread = {
+      id: threadId,
+      title,
+      createdAt: Date.now(),
+      preview: preview.slice(0, 60),
+      messages: finalMessages,
+      folderId: null,
+    };
+    setThreads((t) => {
+      const rest = t.filter((x) => x.id !== threadId);
+      return [updated, ...rest].slice(0, 40);
+    });
+  }
+
   async function send() {
     if (!input.trim() || loading) return;
-    const next = [...messages, { role: "user", content: input.trim() } as Msg];
-    setMessages(next);
+    const userMessage: Msg = { role: "user", content: input.trim() };
+    const baseMessages = [...messages, userMessage];
+    setMessages(baseMessages);
     setInput("");
     setLoading(true);
+
     try {
-      const r = await fetch("/api/chat", {
+      const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, sessionId }),
+        body: JSON.stringify({ messages: baseMessages, sessionId }),
       });
-      if (r.status === 401) return (window.location.href = "/sign-in");
-      if (r.status === 402) return (window.location.href = "/subscribe");
-      if (!r.ok) {
-        const errorData = await r.json().catch(() => ({}));
-        const errorMsg = errorData.error || errorData.message || `HTTP ${r.status}: ${r.statusText}`;
-        
-        // Log full error details for debugging
+
+      if (response.status === 401) {
+        window.location.href = "/sign-in";
+        return;
+      }
+      if (response.status === 402) {
+        window.location.href = "/subscribe";
+        return;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}`;
         console.error("API Error:", {
-          status: r.status,
-          statusText: r.statusText,
+          status: response.status,
+          statusText: response.statusText,
           error: errorData,
         });
-        
-        if (r.status === 429) {
-          // Rate limit error
+        if (response.status === 429) {
           console.warn("Rate limit hit. To fix:", {
             method1: "Add DISABLE_RATE_LIMIT=true to .env.local and restart server",
             method2: "Restart dev server to clear rate limit store",
             method3: "Wait 5 minutes for rate limit to reset",
           });
         }
-        
         throw new Error(errorMsg);
       }
-      const data = await r.json();
-      console.log("API Response:", data); // Debug log
-      if (data.sessionId && !sessionId) setSessionId(data.sessionId);
-      const reply = data.data?.text ?? data.text ?? data.message ?? "No response";
-      if (reply === "No response") {
-        console.error("No response from API:", data);
+
+      // Handle non-streaming fallback responses (should be rare)
+      if (!contentType.includes("application/x-ndjson")) {
+        const data = await response.json().catch(() => ({}));
+        const reply = data.data?.text ?? data.text ?? data.message ?? "No response";
+        const finalMessages = [...baseMessages, { role: "assistant", content: reply }];
+        const resolvedSessionId = data.sessionId ?? sessionId ?? crypto.randomUUID();
+        setSessionId(resolvedSessionId);
+        setMessages(finalMessages);
+        upsertThread(resolvedSessionId, finalMessages, reply);
+        return;
       }
-              const full = [...next, { role: "assistant", content: reply } as Msg];
-      setMessages(full);
-      const title = next[0]?.content?.slice(0, 36) || "New chat";
-      const threadId = data.sessionId ?? sessionId ?? crypto.randomUUID();
-      const updated: Thread = { id: threadId, title, createdAt: Date.now(), preview: reply.slice(0, 60), messages: full, folderId: null };
-      setThreads((t) => {
-        const rest = t.filter((x) => x.id !== threadId);
-        return [updated, ...rest].slice(0, 40);
-      });
-      
-      // Save to database (non-blocking)
-      fetch("/api/chat/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          threadId,
-          messages: full,
-        }),
-      }).catch(() => {
-        // Ignore errors - database save is non-critical
-      });
+
+      setMessages([...baseMessages, { role: "assistant", content: "" }]);
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let assistantBuffer = "";
+      let streamSessionId = sessionId;
+      let doneReceived = false;
+
+      const updateAssistant = (content: string) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIndex = updated.length - 1;
+          if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
+            updated[lastIndex] = { ...updated[lastIndex], content };
+          } else {
+            updated.push({ role: "assistant", content });
+          }
+          return updated;
+        });
+      };
+
+      const processLine = (line: string) => {
+        if (!line.trim()) return;
+        let payload: any;
+        try {
+          payload = JSON.parse(line);
+        } catch {
+          return;
+        }
+        switch (payload.type) {
+          case "meta":
+            if (payload.sessionId) {
+              streamSessionId = payload.sessionId;
+            }
+            break;
+          case "token":
+            if (typeof payload.value === "string") {
+              assistantBuffer += payload.value;
+              updateAssistant(assistantBuffer);
+            }
+            break;
+          case "done":
+            if (payload.sessionId) {
+              streamSessionId = payload.sessionId;
+            }
+            doneReceived = true;
+            break;
+          case "error":
+            throw new Error(payload.error || "Streaming error");
+          default:
+            break;
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          processLine(line);
+        }
+
+        if (doneReceived) {
+          break;
+        }
+      }
+
+      if (buffer.trim()) {
+        processLine(buffer.trim());
+      }
+
+      if (!assistantBuffer) {
+        throw new Error("No response from assistant");
+      }
+
+      const resolvedSessionId = streamSessionId ?? sessionId ?? crypto.randomUUID();
+      const finalMessages = [...baseMessages, { role: "assistant", content: assistantBuffer }];
+      setSessionId(resolvedSessionId);
+      setMessages(finalMessages);
+      upsertThread(resolvedSessionId, finalMessages, assistantBuffer);
     } catch (error) {
       console.error("Chat error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Error calling API. Please check the console for details.";
-      setMessages((m) => [...m, { role: "assistant", content: `Error: ${errorMessage}` }]);
+      const errorMessage =
+        error instanceof Error ? error.message : "Error calling API. Please check the console for details.";
+      const finalMessages = [...baseMessages, { role: "assistant", content: `Error: ${errorMessage}` }];
+      setMessages(finalMessages);
     } finally {
       setLoading(false);
     }

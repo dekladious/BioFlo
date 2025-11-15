@@ -5,3 +5,6 @@ out/
 /.env*
 !.env.example
 *.log
+
+# clerk configuration (can include secrets)
+/.clerk/

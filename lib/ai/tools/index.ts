@@ -88,8 +88,8 @@ export function detectToolFromUserText(text: string): { name: string; args: unkn
 
   // sleepOptimizer triggers
   const sleepTriggers = /(sleep|sleep.*optim|sleep.*protocol|circadian|insomnia|sleep.*schedule|sleep.*routine|better.*sleep|improve.*sleep|sleep.*quality|trouble.*sleep|can't.*sleep)/i.test(t);
-  if (sleepTriggers && !/(protocol|plan|program|routine|schedule).*(for|to|optimize)/i.test(t)) {
-    // Only trigger if it's specifically about sleep optimization, not protocol building
+  const explicitSleepPlan = /(sleep.*(plan|protocol|schedule|program)|plan.*sleep)/i.test(t);
+  if (sleepTriggers || explicitSleepPlan) {
     const sleepIssues: string[] = [];
     if (/(falling.*asleep|can't.*fall.*asleep|trouble.*falling)/i.test(t)) sleepIssues.push("falling_asleep");
     if (/(staying.*asleep|wake.*up|can't.*stay)/i.test(t)) sleepIssues.push("staying_asleep");

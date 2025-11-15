@@ -311,19 +311,34 @@ export const sleepOptimizer = registerTool({
 
 // Helper functions
 function parseTime(timeStr: string): number {
-  // Handle "22:30" or "10:30 PM" format
-  const cleaned = timeStr.trim().toUpperCase();
-  const isPM = cleaned.includes("PM");
-  const isAM = cleaned.includes("AM");
-  
-  const timeOnly = cleaned.replace(/(AM|PM)/g, "").trim();
-  const [hours, minutes] = timeOnly.split(/[: ]/).map(Number);
-  
-  let hour24 = hours;
-  if (isPM && hours !== 12) hour24 += 12;
-  if (isAM && hours === 12) hour24 = 0;
-  
-  return hour24;
+  try {
+    // Handle "22:30" or "10:30 PM" format
+    const cleaned = timeStr.trim().toUpperCase();
+    const isPM = cleaned.includes("PM");
+    const isAM = cleaned.includes("AM");
+    
+    const timeOnly = cleaned.replace(/(AM|PM)/g, "").trim();
+    const parts = timeOnly.split(/[: ]/).filter(Boolean);
+    
+    if (parts.length < 1) {
+      throw new Error(`Invalid time format: ${timeStr}`);
+    }
+    
+    const hours = Number(parts[0]);
+    if (isNaN(hours) || hours < 0 || hours > 23) {
+      throw new Error(`Invalid hour: ${parts[0]}`);
+    }
+    
+    let hour24 = hours;
+    if (isPM && hours !== 12) hour24 += 12;
+    if (isAM && hours === 12) hour24 = 0;
+    
+    return hour24;
+  } catch (error) {
+    // Default to 6 AM if parsing fails
+    console.warn(`Failed to parse time "${timeStr}", defaulting to 6 AM:`, error);
+    return 6;
+  }
 }
 
 function formatTime(hour: number): string {

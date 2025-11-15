@@ -15,6 +15,10 @@ export type RunModelArgs = {
   maxTokens?: number;
 };
 
+export type StreamModelArgs = RunModelArgs & {
+  onToken: (token: string) => void | Promise<void>;
+};
+
 // Default models (latest stable versions)
 export const DEFAULT_MODELS = {
   openai: "gpt-4o", // Latest GPT-4o model
@@ -64,6 +68,35 @@ export async function runModel({
       provider,
       "API_ERROR"
     );
+  }
+}
+
+export async function streamModel({
+  provider = "anthropic",
+  model,
+  system,
+  messages,
+  timeout = 30000,
+  maxTokens = 2000,
+  onToken,
+}: StreamModelArgs): Promise<void> {
+  try {
+    if (provider === "openai") {
+      await streamOpenAI({ model, system, messages, timeout, maxTokens, onToken });
+      return;
+    }
+    if (provider === "anthropic") {
+      await streamAnthropic({ model, system, messages, timeout, maxTokens, onToken });
+      return;
+    }
+    throw new ModelError("No provider configured", provider, "NO_PROVIDER");
+  } catch (error: unknown) {
+    if (error instanceof ModelError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : "Unknown error";
+    logger.error(`Model stream error (${provider})`, error);
+    throw new ModelError(`Failed to stream response: ${message}`, provider, "API_ERROR");
   }
 }
 
@@ -130,6 +163,8 @@ async function runOpenAI({
     throw error;
   }
 }
+
+type StreamArgs = Omit<RunModelArgs, "provider"> & { onToken: (token: string) => void | Promise<void> };
 
 async function runAnthropic({
   model,
@@ -204,6 +239,132 @@ async function runAnthropic({
         "anthropic",
         "API_ERROR"
       );
+    }
+    throw error;
+  }
+}
+
+async function streamAnthropic({
+  model,
+  system,
+  messages,
+  timeout,
+  maxTokens,
+  onToken,
+}: StreamArgs): Promise<void> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new ModelError("ANTHROPIC_API_KEY is not configured", "anthropic", "MISSING_API_KEY");
+  }
+
+  const client = new Anthropic({
+    apiKey,
+    timeoutMs: timeout,
+    defaultHeaders: {
+      "anthropic-version": "2023-06-01",
+    },
+  });
+
+  try {
+    const stream = await client.messages.create({
+      model: model ?? DEFAULT_MODELS.anthropic,
+      max_tokens: maxTokens,
+      system,
+      messages: messages.map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+      })),
+      stream: true,
+    });
+
+    for await (const event of stream as any) {
+      if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+        await onToken(event.delta.text);
+      }
+    }
+  } catch (error: unknown) {
+    logger.error("Anthropic streaming call failed", { error, model: model ?? DEFAULT_MODELS.anthropic });
+    if (error instanceof Error) {
+      if (error.message.includes("rate limit") || error.message.includes("429")) {
+        throw new ModelError("Rate limit exceeded. Please try again later.", "anthropic", "RATE_LIMIT", 429);
+      }
+      if (
+        error.message.includes("authentication") ||
+        error.message.includes("401") ||
+        error.message.includes("Invalid API key")
+      ) {
+        throw new ModelError("Invalid API key. Please check your ANTHROPIC_API_KEY in .env.local", "anthropic", "AUTH_ERROR", 401);
+      }
+      if (error.message.includes("model") || error.message.includes("not found")) {
+        throw new ModelError(
+          `Model not found: ${model ?? DEFAULT_MODELS.anthropic}. Please check the model name.`,
+          "anthropic",
+          "MODEL_ERROR",
+          400
+        );
+      }
+      throw new ModelError(`Anthropic API error: ${error.message}`, "anthropic", "API_ERROR");
+    }
+    throw error;
+  }
+}
+
+async function streamOpenAI({
+  model,
+  system,
+  messages,
+  timeout,
+  maxTokens,
+  onToken,
+}: StreamArgs): Promise<void> {
+  const apiKey = env.openai.apiKey();
+  if (!apiKey) {
+    throw new ModelError("OPENAI_API_KEY is not configured", "openai", "MISSING_API_KEY");
+  }
+
+  const client = new OpenAI({
+    apiKey,
+    timeout,
+    maxRetries: 2,
+  });
+
+  try {
+    const stream = await client.chat.completions.create({
+      model: model ?? DEFAULT_MODELS.openai,
+      messages: [
+        { role: "system", content: system },
+        ...messages,
+      ],
+      temperature: 0.7,
+      max_tokens: maxTokens,
+      stream: true,
+    });
+
+    for await (const chunk of stream as any) {
+      const delta = chunk?.choices?.[0]?.delta;
+      if (!delta) continue;
+
+      if (typeof delta.content === "string") {
+        await onToken(delta.content);
+      } else if (Array.isArray(delta.content)) {
+        for (const part of delta.content) {
+          if (typeof part === "string") {
+            await onToken(part);
+          } else if (part?.type === "text" && part.text) {
+            await onToken(part.text);
+          }
+        }
+      }
+    }
+  } catch (error: unknown) {
+    if (error instanceof OpenAI.APIError) {
+      if (error.status === 429) {
+        throw new ModelError("Rate limit exceeded. Please try again later.", "openai", "RATE_LIMIT", 429);
+      }
+      if (error.status === 401) {
+        throw new ModelError("Invalid API key", "openai", "AUTH_ERROR", 401);
+      }
+      throw new ModelError(`OpenAI API error: ${error.message}`, "openai", "API_ERROR", error.status);
     }
     throw error;
   }

@@ -1191,170 +1191,95 @@ export async function POST(req: Request) {
             requestId 
           });
 
-          return Response.json({ 
-            success: true,
-            data: { text: lines.join("\n") },
+          const toolText = lines.join("\n");
+
+          return createStreamResponse({
             requestId,
-            timestamp: new Date().toISOString(),
-          }, {
-            headers: {
-              "X-RateLimit-Limit": String(RATE_LIMIT_CONFIG.maxRequests),
-              "X-RateLimit-Remaining": String(rateLimitResult.remaining),
-              "X-RateLimit-Reset": String(rateLimitResult.resetAt),
-              "X-Request-Id": requestId,
-              "Content-Type": "application/json",
+            headers: responseHeaders,
+            streamHandler: async (send) => {
+              send({ type: "meta", sessionId: sessionIdForHistory });
+              await streamTextChunks(toolText, send);
+              await persistHistory({
+                userId,
+                sessionId: sessionIdForHistory,
+                requestMessages: messages,
+                assistantContent: toolText,
+                provider: `tool:${tool.name}`,
+              });
+              logger.info("Chat API: Tool response streamed", {
+                userId,
+                toolName: tool.name,
+                requestId,
+              });
+              send({ type: "done", sessionId: sessionIdForHistory });
             },
           });
         } catch (toolError: unknown) {
-          logger.error("Chat API: Tool execution failed", toolError, userId);
-          return createErrorResponse("Failed to generate meal plan. Please try again.", requestId, 500);
+          const errorMessage = toolError instanceof Error ? toolError.message : String(toolError);
+          const errorStack = toolError instanceof Error ? toolError.stack : undefined;
+          logger.error("Chat API: Tool execution failed", {
+            error: errorMessage,
+            stack: errorStack,
+            toolName: tool.name,
+            userId,
+            requestId,
+          });
+          
+          // Provide more helpful error message
+          const userFriendlyMessage = `Failed to generate ${tool.name === "sleepOptimizer" ? "sleep protocol" : tool.name === "mealPlanner" ? "meal plan" : "protocol"}. ${errorMessage.includes("database") || errorMessage.includes("connection") ? "Database connection issue. Please try again." : "Please try again or rephrase your request."}`;
+          
+          return createErrorResponse(userFriendlyMessage, requestId, 500);
         }
       }
     }
 
-    // Default: LLM response using model router
-    // PRIMARY: Anthropic Claude 3.5 Sonnet (as per architecture)
-    // Fallback to OpenAI if Anthropic is not available
-    let text: string;
-    let provider: "anthropic" | "openai" = (process.env.AI_PROVIDER as "openai" | "anthropic") || "anthropic";
-    
-    try {
-      text = await withTimeout(
-        runModel({
-          provider,
-          system: BIOFLO_SYSTEM_PROMPT,
-          messages: messages.slice(-20).map(m => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          })),
-          timeout: AI_TIMEOUT_MS,
-          maxTokens: 2000,
-        }),
-        AI_TIMEOUT_MS,
-        "AI model request timeout"
-      );
-    } catch (primaryError: unknown) {
-      // Check if it's a rate limit error from the API provider
-      const isApiRateLimit = primaryError instanceof Error && 
-        (primaryError.message.includes("Rate limit") || primaryError.message.includes("rate limit"));
-      
-      if (isApiRateLimit) {
-        logger.warn("API provider rate limit hit", { 
-          provider, 
-          error: primaryError, 
-          userId, 
-          requestId 
-        });
-        
-        // Fallback to OpenAI if Anthropic rate limited
-        if (provider === "anthropic" && process.env.OPENAI_API_KEY) {
-          logger.info("Anthropic rate limited, falling back to OpenAI", { userId, requestId });
-          try {
-            provider = "openai";
-            text = await withTimeout(
-              runModel({
-                provider: "openai",
-                system: BIOFLO_SYSTEM_PROMPT,
-                messages: messages.slice(-20).map(m => ({
-                  role: m.role as "user" | "assistant",
-                  content: m.content,
-                })),
-                timeout: AI_TIMEOUT_MS,
-                maxTokens: 2000,
-              }),
-              AI_TIMEOUT_MS,
-              "AI model request timeout"
-            );
-          } catch (fallbackError: unknown) {
-            // If both are rate limited, throw a clearer error
-            if (fallbackError instanceof Error && fallbackError.message.includes("Rate limit")) {
-              throw new Error("Both AI providers are rate limited. Please wait a few minutes and try again, or check your API key limits.");
-            }
-            logger.error("Both Anthropic and OpenAI failed", { primaryError, fallbackError, userId, requestId });
-            throw fallbackError;
-          }
-        } else {
-          // No fallback available, throw clearer error
-          throw new Error(`AI provider (${provider}) rate limit exceeded. This is from the API provider, not our system. Please wait a few minutes or check your API key limits.`);
-        }
-      } else {
-        // Other error, try fallback if available
-        if (provider === "anthropic" && process.env.OPENAI_API_KEY) {
-          logger.warn("Anthropic API failed, falling back to OpenAI", { error: primaryError, userId, requestId });
-          try {
-            provider = "openai";
-            text = await withTimeout(
-              runModel({
-                provider: "openai",
-                system: BIOFLO_SYSTEM_PROMPT,
-                messages: messages.slice(-20).map(m => ({
-                  role: m.role as "user" | "assistant",
-                  content: m.content,
-                })),
-                timeout: AI_TIMEOUT_MS,
-                maxTokens: 2000,
-              }),
-              AI_TIMEOUT_MS,
-              "AI model request timeout"
-            );
-          } catch (fallbackError: unknown) {
-            logger.error("Both Anthropic and OpenAI failed", { primaryError, fallbackError, userId, requestId });
-            throw fallbackError;
-          }
-        } else {
-          throw primaryError;
-        }
-      }
-    }
-    
-    // Save chat history (non-blocking)
-    const sessionIdForHistory = body.sessionId || crypto.randomUUID();
-    try {
-      const { query, queryOne } = await import("@/lib/db/client");
-      const userRecord = await queryOne<{ id: string }>(
-        "SELECT id FROM users WHERE clerk_user_id = $1",
-        [userId || ""]
-      );
-      if (userRecord) {
-        // Save all messages in the thread
-        for (const msg of [...messages, { role: "assistant" as const, content: text }]) {
-          await query(
-            `INSERT INTO chat_messages (user_id, thread_id, role, content, metadata)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT DO NOTHING`,
-            [
-              userRecord.id,
-              sessionIdForHistory,
-              msg.role,
-              msg.content,
-              JSON.stringify({ provider, model: provider === "anthropic" ? "claude-4-5" : "gpt-4o" }),
-            ]
-          );
-        }
-      }
-    } catch (dbError) {
-      // Ignore database errors - history saving is non-critical
-      logger.debug("Chat history save skipped", { error: dbError });
-    }
-    
-    logger.info("Chat API: Request completed", { 
-      userId, 
-      messageCount: messages.length,
+    const preferredProvider: "anthropic" | "openai" =
+      (process.env.AI_PROVIDER as "openai" | "anthropic") || "anthropic";
+
+    return createStreamResponse({
       requestId,
-    });
-    
-    return Response.json({ 
-      success: true,
-      data: { text, sessionId: sessionIdForHistory },
-      requestId,
-      timestamp: new Date().toISOString(),
-    }, {
-      headers: {
-        "X-RateLimit-Limit": String(RATE_LIMIT_CONFIG.maxRequests),
-        "X-RateLimit-Remaining": String(rateLimitResult.remaining),
-        "X-RateLimit-Reset": String(rateLimitResult.resetAt),
-        "X-Request-Id": requestId,
-        "Content-Type": "application/json",
+      headers: responseHeaders,
+      streamHandler: async (send) => {
+        send({ type: "meta", sessionId: sessionIdForHistory });
+        let assistantText = "";
+        const onToken = (token: string) => {
+          assistantText += token;
+          send({ type: "token", value: token });
+        };
+
+        try {
+          const providerUsed = await streamWithFallback({
+            provider: preferredProvider,
+            system: BIOFLO_SYSTEM_PROMPT,
+            messages: normalizedMessages,
+            timeout: AI_TIMEOUT_MS,
+            maxTokens: 2000,
+            onToken,
+          });
+
+          await persistHistory({
+            userId,
+            sessionId: sessionIdForHistory,
+            requestMessages: messages,
+            assistantContent: assistantText,
+            provider: providerUsed,
+          });
+
+          logger.info("Chat API: Request completed", {
+            userId,
+            messageCount: messages.length,
+            requestId,
+          });
+
+          send({ type: "done", sessionId: sessionIdForHistory });
+        } catch (error) {
+          logger.error("Chat API streaming error", error, userId);
+          const message =
+            error instanceof Error && process.env.NODE_ENV === "development"
+              ? error.message
+              : "An error occurred. Please try again.";
+          send({ type: "error", error: message });
+        }
       },
     });
   } catch (e: unknown) {
@@ -1392,5 +1317,148 @@ export async function POST(req: Request) {
       : "An error occurred. Please try again.";
     
     return createErrorResponse(errorMessage, requestId, 500);
+  }
+}
+
+type SendFn = (payload: Record<string, unknown>) => void;
+
+function createStreamResponse({
+  requestId,
+  headers,
+  streamHandler,
+}: {
+  requestId: string;
+  headers: Record<string, string>;
+  streamHandler: (send: SendFn) => Promise<void>;
+}) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const send: SendFn = (payload) => {
+        controller.enqueue(encoder.encode(JSON.stringify({ requestId, ...payload }) + "\n"));
+      };
+
+      streamHandler(send)
+        .then(() => controller.close())
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          send({ type: "error", error: message });
+          controller.close();
+        });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      ...headers,
+      "Content-Type": "application/x-ndjson",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
+
+async function streamTextChunks(text: string, send: SendFn) {
+  const chunkSize = 120;
+  for (let i = 0; i < text.length; i += chunkSize) {
+    const chunk = text.slice(i, i + chunkSize);
+    if (chunk) {
+      send({ type: "token", value: chunk });
+    }
+    await delay(20);
+  }
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function persistHistory({
+  userId,
+  sessionId,
+  requestMessages,
+  assistantContent,
+  provider,
+}: {
+  userId: string | null;
+  sessionId: string;
+  requestMessages: Array<{ role: string; content: string }>;
+  assistantContent: string;
+  provider: string;
+}) {
+  try {
+    const { query, queryOne } = await import("@/lib/db/client");
+    const userRecord = await queryOne<{ id: string }>(
+      "SELECT id FROM users WHERE clerk_user_id = $1",
+      [userId || ""]
+    );
+    if (!userRecord) return;
+
+    for (const msg of [...requestMessages, { role: "assistant" as const, content: assistantContent }]) {
+      await query(
+        `INSERT INTO chat_messages (user_id, thread_id, role, content, metadata)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT DO NOTHING`,
+        [
+          userRecord.id,
+          sessionId,
+          msg.role,
+          msg.content,
+          JSON.stringify({ provider }),
+        ]
+      );
+    }
+  } catch (error) {
+    logger.debug("Chat history save skipped", { error });
+  }
+}
+
+async function streamWithFallback({
+  provider,
+  system,
+  messages,
+  timeout,
+  maxTokens,
+  onToken,
+}: {
+  provider: "anthropic" | "openai";
+  system: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  timeout: number;
+  maxTokens: number;
+  onToken: (token: string) => void;
+}): Promise<"anthropic" | "openai"> {
+  let currentProvider = provider;
+  try {
+    await streamModel({
+      provider: currentProvider,
+      system,
+      messages,
+      timeout,
+      maxTokens,
+      onToken,
+    });
+    return currentProvider;
+  } catch (error) {
+    if (
+      currentProvider === "anthropic" &&
+      process.env.OPENAI_API_KEY &&
+      error instanceof ModelError
+    ) {
+      logger.warn("Anthropic streaming failed, falling back to OpenAI", {
+        error: error.message,
+      });
+      currentProvider = "openai";
+      await streamModel({
+        provider: currentProvider,
+        system,
+        messages,
+        timeout,
+        maxTokens,
+        onToken,
+      });
+      return currentProvider;
+    }
+    throw error;
   }
 }
