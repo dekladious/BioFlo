@@ -21,8 +21,8 @@ export type StreamModelArgs = RunModelArgs & {
 
 // Default models (latest stable versions)
 export const DEFAULT_MODELS = {
-  openai: "gpt-4o", // Latest GPT-4o model
-  anthropic: "claude-sonnet-4-20250514", // Claude Sonnet 4 (latest)
+  openai: "gpt-5", // GPT‑5 (primary)
+  anthropic: "claude-sonnet-4-20250514", // Claude 4.5 Sonnet (fallback)
 } as const;
 
 // Custom error classes for better error handling
@@ -39,7 +39,7 @@ export class ModelError extends Error {
 }
 
 export async function runModel({ 
-  provider = "anthropic", // PRIMARY: Anthropic Claude 4.5 (as per architecture)
+  provider = "openai", // PRIMARY: OpenAI GPT-5
   model, 
   system, 
   messages,
@@ -72,7 +72,7 @@ export async function runModel({
 }
 
 export async function streamModel({
-  provider = "anthropic",
+  provider = "openai",
   model,
   system,
   messages,

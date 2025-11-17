@@ -8,9 +8,41 @@ interface RateLimitEntry {
 
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
+// Track last cleanup time to prevent excessive cleanup operations
+let lastCleanupTime = Date.now();
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Clean up every 5 minutes
+const MAX_STORE_SIZE = 10000; // Maximum entries before forced cleanup
+
+// Cleanup expired entries
+function cleanupExpiredEntries(): void {
+  const now = Date.now();
+  let cleaned = 0;
+  
+  for (const [key, value] of rateLimitStore.entries()) {
+    if (value.resetAt < now) {
+      rateLimitStore.delete(key);
+      cleaned++;
+    }
+  }
+  
+  // If store is still too large, remove oldest entries
+  if (rateLimitStore.size > MAX_STORE_SIZE) {
+    const entries = Array.from(rateLimitStore.entries())
+      .sort((a, b) => a[1].resetAt - b[1].resetAt);
+    
+    const toRemove = rateLimitStore.size - MAX_STORE_SIZE;
+    for (let i = 0; i < toRemove; i++) {
+      rateLimitStore.delete(entries[i][0]);
+    }
+  }
+  
+  lastCleanupTime = now;
+}
+
 // Export function to clear rate limit store (useful for testing)
 export function clearRateLimitStore(): void {
   rateLimitStore.clear();
+  lastCleanupTime = Date.now();
 }
 
 // Export function to get current rate limit status
@@ -37,13 +69,9 @@ export function rateLimit(
   const now = Date.now();
   const entry = rateLimitStore.get(identifier);
 
-  // Clean up expired entries periodically (every 1000 calls)
-  if (Math.random() < 0.001) {
-    for (const [key, value] of rateLimitStore.entries()) {
-      if (value.resetAt < now) {
-        rateLimitStore.delete(key);
-      }
-    }
+  // Clean up expired entries periodically (every 5 minutes or if store is too large)
+  if (now - lastCleanupTime > CLEANUP_INTERVAL_MS || rateLimitStore.size > MAX_STORE_SIZE) {
+    cleanupExpiredEntries();
   }
 
   if (!entry || entry.resetAt < now) {

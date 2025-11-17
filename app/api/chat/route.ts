@@ -1,12 +1,16 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
-import { BIOFLO_SYSTEM_PROMPT } from "@/lib/ai/policy";
-import { runModel } from "@/lib/ai/modelRouter";
+import { randomUUID } from "crypto";
+import { ModelError, streamModel } from "@/lib/ai/modelRouter";
 import { detectToolFromUserText, getTool } from "@/lib/ai/tools";
+import { generateCoachReply, CoachContext } from "@/lib/ai/gateway";
+import { triageUserMessage } from "@/lib/ai/safety";
+import { retrieveRelevantContext, getRelevantLongevityDocs, formatLongevityKnowledgeSnippets } from "@/lib/ai/rag";
 import { CHAT, RATE_LIMITS } from "@/lib/constants";
 import { logger } from "@/lib/logger";
 import { rateLimit, getRateLimitIdentifier } from "@/lib/rate-limit";
 import { ClerkPublicMetadata } from "@/types";
 import { getRequestMetadata, validateContentType, withTimeout, createErrorResponse } from "@/lib/api-utils";
+import { queryOne } from "@/lib/db/client";
 import "@/lib/ai/tools/mealPlanner"; // ensure tool registers
 import "@/lib/ai/tools/supplementRecommender"; // ensure tool registers
 import "@/lib/ai/tools/sleepOptimizer"; // ensure tool registers
@@ -54,7 +58,6 @@ export async function POST(req: Request) {
     let rateLimitResult;
     const disableRateLimit = process.env.DISABLE_RATE_LIMIT === "true" || process.env.DISABLE_RATE_LIMIT === "1";
     const isDevelopment = process.env.NODE_ENV === "development" || !process.env.NODE_ENV;
-    
     // Log rate limit status for debugging
     logger.debug("Rate limit check", { 
       disableRateLimit, 
@@ -113,6 +116,13 @@ export async function POST(req: Request) {
       }
     }
     
+    const responseHeaders = {
+      "X-RateLimit-Limit": String(RATE_LIMIT_CONFIG.maxRequests),
+      "X-RateLimit-Remaining": String(rateLimitResult.remaining ?? 0),
+      "X-RateLimit-Reset": String(rateLimitResult.resetAt ?? Date.now()),
+      "X-Request-Id": requestId,
+    };
+    
     // Paywall check
     const user = await currentUser();
     const isPro = Boolean((user?.publicMetadata as ClerkPublicMetadata)?.isPro);
@@ -123,7 +133,8 @@ export async function POST(req: Request) {
 
     // Parse and validate request body
     const body = await req.json();
-    const { messages } = body;
+    const { messages, sessionId: incomingSessionId } = body;
+    const sessionIdForHistory = incomingSessionId || randomUUID();
     
     // Input validation
     if (!Array.isArray(messages)) {
@@ -155,18 +166,8 @@ export async function POST(req: Request) {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const userContent = lastUser?.content || "";
 
-    // Safety: Crisis keyword detection (server-side block)
-    const crisisPattern = /(suicide|kill myself|self-harm|hurt myself|end my life)/i;
-    if (crisisPattern.test(userContent)) {
-      logger.warn("Chat API: Crisis keywords detected", { userId, requestId });
-      const crisisMsg = "If you're in immediate danger, call your local emergency number now. You can also contact your local crisis line (e.g., 988 in the U.S.).";
-      return Response.json({ 
-        success: true,
-        data: { text: crisisMsg },
-        requestId,
-        timestamp: new Date().toISOString(),
-      });
-    }
+    // Note: Triage and routing is now handled inside generateCoachReply
+    // We still log for monitoring, but the gateway handles all routing
 
     // Tool detection
     const maybeTool = detectToolFromUserText(userContent);
@@ -1233,8 +1234,99 @@ export async function POST(req: Request) {
       }
     }
 
-    const preferredProvider: "anthropic" | "openai" =
-      (process.env.AI_PROVIDER as "openai" | "anthropic") || "anthropic";
+    // Load user profile for context
+    let userProfile: { goals?: Record<string, unknown>; main_struggles?: string[]; preferences?: Record<string, unknown> } | null = null;
+    let userDbId: string | null = null;
+    try {
+      const userRecord = await queryOne<{ id: string; goals?: Record<string, unknown>; main_struggles?: string[] }>(
+        "SELECT id, goals, main_struggles FROM users WHERE clerk_user_id = $1",
+        [userId]
+      );
+      if (userRecord) {
+        userDbId = userRecord.id;
+        userProfile = {
+          goals: userRecord.goals || {},
+          main_struggles: userRecord.main_struggles || [],
+        };
+      }
+    } catch (dbError) {
+      logger.debug("Chat API: Failed to load user profile", { error: dbError, userId, requestId });
+    }
+
+    // Retrieve RAG context (relevant protocol documents)
+    let ragContext = "";
+    try {
+      ragContext = await retrieveRelevantContext({
+        queryText: userContent,
+        userId: userDbId,
+        limit: 5,
+      });
+      if (ragContext) {
+        logger.debug("Chat API: RAG context retrieved", {
+          userId,
+          contextLength: ragContext.length,
+          requestId,
+        });
+      }
+    } catch (ragError) {
+      logger.warn("Chat API: RAG retrieval failed", { error: ragError, userId, requestId });
+      // Continue without RAG context if retrieval fails
+    }
+
+    // Retrieve longevity knowledge base documents
+    let longevityKnowledge = "";
+    try {
+      const longevityDocs = await getRelevantLongevityDocs(userContent, {
+        limit: 8,
+      });
+      if (longevityDocs.length > 0) {
+        longevityKnowledge = formatLongevityKnowledgeSnippets(longevityDocs);
+        logger.debug("Chat API: Longevity knowledge retrieved", {
+          userId,
+          docCount: longevityDocs.length,
+          requestId,
+        });
+      }
+    } catch (longevityError) {
+      logger.warn("Chat API: Longevity knowledge retrieval failed", { error: longevityError, userId, requestId });
+      // Continue without longevity knowledge if retrieval fails
+    }
+
+    // Build context for AI Gateway
+    const normalizedMessages = messages
+      .slice(-20)
+      .map((m) => ({
+        role: m.role === "assistant" ? "assistant" as const : "user" as const,
+        content: m.content,
+      }));
+
+    // Get protocol status
+    let protocolStatus = undefined;
+    if (userDbId) {
+      try {
+        const { getProtocolStatusSummary } = await import("@/lib/utils/protocol-context");
+        protocolStatus = await getProtocolStatusSummary(userDbId);
+      } catch (protocolError) {
+        logger.debug("Chat API: Failed to load protocol status", { error: protocolError, userId, requestId });
+      }
+    }
+
+    // Build context strings for prompt templates
+    const context: CoachContext = {
+      userId,
+      userProfile: userProfile
+        ? `Goals: ${JSON.stringify(userProfile.goals || {})}\nMain struggles: ${(userProfile.main_struggles || []).join(", ")}`
+        : undefined,
+      recentCheckIns: "No recent check-ins available", // TODO: Add actual check-ins
+      wearableSummary: undefined, // TODO: Add wearable summary
+      protocolStatus: protocolStatus || undefined,
+      knowledgeSnippets: longevityKnowledge || ragContext || undefined,
+      recentMessages: normalizedMessages
+        .slice(-5)
+        .map((m) => `${m.role}: ${m.content}`)
+        .join("\n"),
+      todayMode: "NORMAL", // TODO: Get from user preferences
+    };
 
     return createStreamResponse({
       requestId,
@@ -1248,21 +1340,17 @@ export async function POST(req: Request) {
         };
 
         try {
-          const providerUsed = await streamWithFallback({
-            provider: preferredProvider,
-            system: BIOFLO_SYSTEM_PROMPT,
-            messages: normalizedMessages,
-            timeout: AI_TIMEOUT_MS,
-            maxTokens: 2000,
-            onToken,
-          });
+          // Use AI Gateway for coach reply (handles triage and routing internally)
+          await generateCoachReply(context, userContent, onToken);
+
+          // Note: Safety review is now handled inside generateCoachReply
 
           await persistHistory({
             userId,
             sessionId: sessionIdForHistory,
             requestMessages: messages,
             assistantContent: assistantText,
-            provider: providerUsed,
+            provider: "gateway", // AI Gateway handles provider selection internally
           });
 
           logger.info("Chat API: Request completed", {
@@ -1388,28 +1476,67 @@ async function persistHistory({
 }) {
   try {
     const { query, queryOne } = await import("@/lib/db/client");
-    const userRecord = await queryOne<{ id: string }>(
+    
+    // Ensure user exists in database
+    let userRecord = await queryOne<{ id: string }>(
       "SELECT id FROM users WHERE clerk_user_id = $1",
       [userId || ""]
     );
-    if (!userRecord) return;
-
-    for (const msg of [...requestMessages, { role: "assistant" as const, content: assistantContent }]) {
-      await query(
-        `INSERT INTO chat_messages (user_id, thread_id, role, content, metadata)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT DO NOTHING`,
-        [
-          userRecord.id,
-          sessionId,
-          msg.role,
-          msg.content,
-          JSON.stringify({ provider }),
-        ]
-      );
+    
+    if (!userRecord && userId) {
+      // Create user if they don't exist
+      try {
+        const result = await query<{ id: string }>(
+          "INSERT INTO users (clerk_user_id) VALUES ($1) RETURNING id",
+          [userId]
+        );
+        userRecord = result[0];
+        logger.info("Created user record for chat history", { userId, userDbId: userRecord.id });
+      } catch (createError) {
+        logger.warn("Failed to create user record for chat history", { error: createError, userId });
+        return; // Can't save history without user record
+      }
     }
+    
+    if (!userRecord) {
+      logger.debug("No user record available for chat history", { userId });
+      return;
+    }
+
+    // Save messages - check if they already exist to avoid duplicates
+    // Use a simple approach: check if message with same content exists in thread within last minute
+    for (const msg of [...requestMessages, { role: "assistant" as const, content: assistantContent }]) {
+      try {
+        // Check if this exact message already exists in this thread (within last 5 minutes to avoid duplicates)
+        const existing = await queryOne<{ id: string }>(
+          `SELECT id FROM chat_messages 
+           WHERE user_id = $1 AND thread_id = $2 AND role = $3 AND content = $4 
+           AND created_at > NOW() - INTERVAL '5 minutes'`,
+          [userRecord.id, sessionId, msg.role, msg.content]
+        );
+        
+        if (!existing) {
+          await query(
+            `INSERT INTO chat_messages (user_id, thread_id, role, content, metadata)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              userRecord.id,
+              sessionId,
+              msg.role,
+              msg.content,
+              JSON.stringify({ provider }),
+            ]
+          );
+        }
+      } catch (msgError) {
+        logger.debug("Failed to save individual message", { error: msgError, userId });
+        // Continue with next message
+      }
+    }
+    
+    logger.debug("Chat history persisted", { userId, sessionId, messageCount: requestMessages.length + 1 });
   } catch (error) {
-    logger.debug("Chat history save skipped", { error });
+    logger.debug("Chat history save skipped", { error, userId });
   }
 }
 
@@ -1441,14 +1568,14 @@ async function streamWithFallback({
     return currentProvider;
   } catch (error) {
     if (
-      currentProvider === "anthropic" &&
-      process.env.OPENAI_API_KEY &&
+      currentProvider === "openai" &&
+      process.env.ANTHROPIC_API_KEY &&
       error instanceof ModelError
     ) {
-      logger.warn("Anthropic streaming failed, falling back to OpenAI", {
+      logger.warn("OpenAI streaming failed, falling back to Anthropic", {
         error: error.message,
       });
-      currentProvider = "openai";
+      currentProvider = "anthropic";
       await streamModel({
         provider: currentProvider,
         system,

@@ -3,10 +3,16 @@
 @tailwind utilities;
 
 @layer base {
-  html,
-  body {
+  html.dark,
+  html.dark body {
     background-color: #0b1117;
     color: rgb(241, 245, 249);
+  }
+
+  html:not(.dark),
+  html:not(.dark) body {
+    background-color: #ffffff;
+    color: rgb(15, 23, 42);
   }
 
   a {
@@ -47,10 +53,17 @@
 .prose h2,
 .prose h3,
 .prose h4 {
-  color: rgb(241, 245, 249);
+  color: rgb(15, 23, 42);
   font-weight: 600;
   margin-top: 1.5em;
   margin-bottom: 0.5em;
+}
+
+.dark .prose h1,
+.dark .prose h2,
+.dark .prose h3,
+.dark .prose h4 {
+  color: rgb(241, 245, 249);
 }
 
 .prose h1 {
@@ -84,19 +97,27 @@
 }
 
 .prose code {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(0, 0, 0, 0.05);
   padding: 0.125em 0.375em;
   border-radius: 0.25rem;
   font-size: 0.9em;
 }
 
+.dark .prose code {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
 .prose pre {
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(0, 0, 0, 0.05);
   padding: 1em;
   border-radius: 0.5rem;
   overflow-x: auto;
   margin-top: 1em;
   margin-bottom: 1em;
+}
+
+.dark .prose pre {
+  background-color: rgba(0, 0, 0, 0.3);
 }
 
 .prose pre code {
@@ -105,16 +126,25 @@
 }
 
 .prose hr {
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(0, 0, 0, 0.1);
   margin-top: 2em;
   margin-bottom: 2em;
 }
 
+.dark .prose hr {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 .prose blockquote {
-  border-left: 3px solid rgba(255, 255, 255, 0.2);
+  border-left: 3px solid rgba(0, 0, 0, 0.2);
   padding-left: 1em;
   margin-left: 0;
   font-style: italic;
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.dark .prose blockquote {
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.8);
 }
 
@@ -129,6 +159,10 @@
 
 .prose strong {
   font-weight: 600;
+  color: rgb(15, 23, 42);
+}
+
+.dark .prose strong {
   color: rgb(241, 245, 249);
 }
 
@@ -141,13 +175,22 @@
 
 .prose th,
 .prose td {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   padding: 0.5em;
   text-align: left;
 }
 
+.dark .prose th,
+.dark .prose td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .prose th {
   font-weight: 600;
+  background-color: rgba(0, 0, 0, 0.03);
+}
+
+.dark .prose th {
   background-color: rgba(255, 255, 255, 0.05);
 }
 
@@ -158,8 +201,13 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: 9999px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+.dark *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
   border: 2px solid rgba(11, 17, 23, 0.9);
 }
 

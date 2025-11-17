@@ -1,17 +1,31 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 export default function CheckoutSuccess() {
   const [status, setStatus] = useState<"checking" | "success" | "pending" | "error">("checking");
   const [error, setError] = useState<string | null>(null);
+  const statusRef = useRef(status);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   useEffect(() => {
     const retryCountRef = { current: 0 };
     const maxRetries = 15;
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
 
     const checkStatus = async () => {
+      // Don't continue if component unmounted or aborted
+      if (signal.aborted || statusRef.current === "success") {
+        return;
+      }
+
       try {
-        const res = await fetch("/api/stripe/check-status");
+        const res = await fetch("/api/stripe/check-status", { signal });
         const data = await res.json();
         
         if (!res.ok) {
@@ -23,24 +37,31 @@ export default function CheckoutSuccess() {
         if (isPro) {
           setStatus("success");
           setTimeout(() => {
-            window.location.href = "/chat";
+            if (!signal.aborted) {
+              window.location.href = "/chat";
+            }
           }, 2000);
         } else {
           retryCountRef.current++;
           if (retryCountRef.current >= maxRetries) {
             setStatus("error");
             setError("Subscription activation is taking longer than expected. Please refresh the page or contact support.");
-          } else {
+          } else if (!signal.aborted) {
             setTimeout(checkStatus, 2000);
           }
         }
       } catch (error: any) {
+        // Ignore abort errors
+        if (error.name === "AbortError") {
+          return;
+        }
+        
         console.error("Status check error:", error);
         retryCountRef.current++;
         if (retryCountRef.current >= maxRetries) {
           setStatus("error");
           setError(error.message || "Failed to check subscription status. Please refresh the page.");
-        } else {
+        } else if (!signal.aborted) {
           setTimeout(checkStatus, 2000);
         }
       }
@@ -48,7 +69,8 @@ export default function CheckoutSuccess() {
 
     const timer = setTimeout(checkStatus, 1000);
     const refreshTimer = setTimeout(() => {
-      if (status !== "success") {
+      // Use ref to check current status
+      if (statusRef.current !== "success" && !signal.aborted) {
         window.location.reload();
       }
     }, 30000);
@@ -56,6 +78,7 @@ export default function CheckoutSuccess() {
     return () => {
       clearTimeout(timer);
       clearTimeout(refreshTimer);
+      abortControllerRef.current?.abort();
     };
   }, []);
 

@@ -10,16 +10,36 @@ import { generateRequestId } from "@/lib/api-utils";
 export const runtime = "nodejs";
 
 // Webhook idempotency tracking (in-memory - use Redis for production)
-const processedEvents = new Set<string>();
+// Map stores event ID -> timestamp for TTL-based cleanup
+const processedEvents = new Map<string, number>();
+const MAX_EVENT_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_EVENTS = 5000; // Maximum events to track
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // Clean up every hour
+let lastCleanupTime = Date.now();
 
-// Clean up old event IDs periodically (keep last 1000)
-function cleanupProcessedEvents() {
-  if (processedEvents.size > 1000) {
-    const entries = Array.from(processedEvents);
-    processedEvents.clear();
-    // Keep last 100 entries
-    entries.slice(-100).forEach(id => processedEvents.add(id));
+// Clean up old event IDs based on age and size
+function cleanupProcessedEvents(): void {
+  const now = Date.now();
+  
+  // Remove events older than MAX_EVENT_AGE_MS
+  for (const [eventId, timestamp] of processedEvents.entries()) {
+    if (now - timestamp > MAX_EVENT_AGE_MS) {
+      processedEvents.delete(eventId);
+    }
   }
+  
+  // If still too large, remove oldest entries
+  if (processedEvents.size > MAX_EVENTS) {
+    const entries = Array.from(processedEvents.entries())
+      .sort((a, b) => a[1] - b[1]); // Sort by timestamp
+    
+    const toRemove = processedEvents.size - MAX_EVENTS;
+    for (let i = 0; i < toRemove; i++) {
+      processedEvents.delete(entries[i][0]);
+    }
+  }
+  
+  lastCleanupTime = now;
 }
 
 export async function POST(req: Request) {
@@ -42,15 +62,20 @@ export async function POST(req: Request) {
     event = stripe.webhooks.constructEvent(body, sig, secret);
     logger.info("Webhook: Event received", { type: event.type, eventId: event.id, requestId });
     
+    // Cleanup old events periodically
+    const now = Date.now();
+    if (now - lastCleanupTime > CLEANUP_INTERVAL_MS || processedEvents.size > MAX_EVENTS) {
+      cleanupProcessedEvents();
+    }
+    
     // Idempotency check - prevent duplicate processing
     if (processedEvents.has(event.id)) {
       logger.info("Webhook: Event already processed (idempotency)", { eventId: event.id, requestId });
       return new Response("Event already processed", { status: 200 });
     }
     
-    // Mark as processed
-    processedEvents.add(event.id);
-    cleanupProcessedEvents();
+    // Mark as processed with timestamp
+    processedEvents.set(event.id, now);
   } catch (err: unknown) {
     logger.error("Webhook: Signature verification failed", err);
     const errorMessage = err instanceof Error ? err.message : "Unknown error";

@@ -7,39 +7,31 @@ import { Check } from "lucide-react";
 const pane =
   "rounded-[18px] border border-white/10 bg-white/[0.035] backdrop-blur shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_30px_rgba(0,0,0,0.25)]";
 
-const features = [
-  "Personalized protocols",
-  "Nutrition & meal plans",
-  "Sleep & recovery guidance",
-  "Conversation history & memory",
-  "Priority responses",
-];
-
 function PriceCard({
   name,
-  price,
-  period,
+  subtitle,
+  priceLabel,
   highlight = false,
+  features,
   children,
 }: {
   name: string;
-  price: string;
-  period: "/mo" | "/year";
+  subtitle: string;
+  priceLabel: string;
   highlight?: boolean;
+  features: string[];
   children: React.ReactNode;
 }) {
   return (
     <div className={`${pane} p-6 ${highlight ? "ring-1 ring-sky-400/30 border-white/20" : ""}`}>
-      <div className="text-slate-300">{name}</div>
-      <div className="mt-2 text-4xl font-semibold">
-        £{price}
-        <span className="text-lg align-top">{period}</span>
-      </div>
-      <ul className="mt-4 space-y-2 text-sm">
-        {features.map((f) => (
-          <li key={f} className="flex items-center gap-2">
+      <div className="text-slate-300 uppercase tracking-wide text-xs">{name}</div>
+      <div className="mt-1 text-sm text-slate-400">{subtitle}</div>
+      <div className="mt-3 text-4xl font-semibold text-white">{priceLabel}</div>
+      <ul className="mt-6 space-y-2 text-sm">
+        {features.map((feature) => (
+          <li key={feature} className="flex items-center gap-2">
             <Check className="size-4 text-emerald-400" />
-            <span className="text-slate-200">{f}</span>
+            <span className="text-slate-200">{feature}</span>
           </li>
         ))}
       </ul>
@@ -48,41 +40,83 @@ function PriceCard({
   );
 }
 
+const PRO_MONTHLY = 24.99;
+const ENTERPRISE_MONTHLY = 249;
+const DISCOUNT = 0.15;
+
+function formatPrice(amount: number) {
+  if (amount >= 100) return `£${amount.toFixed(0)}`;
+  return `£${amount.toFixed(2)}`;
+}
+
 export default function PricingPage() {
-  const [yearly, setYearly] = useState(true);
+  const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly");
+
+  const proPriceLabel =
+    billingCycle === "monthly"
+      ? `${formatPrice(PRO_MONTHLY)}/mo`
+      : `${formatPrice(PRO_MONTHLY * 12 * (1 - DISCOUNT))}/yr`;
+
+  const enterprisePriceLabel =
+    billingCycle === "monthly"
+      ? `${formatPrice(ENTERPRISE_MONTHLY)}/mo`
+      : `${formatPrice(ENTERPRISE_MONTHLY * 12 * (1 - DISCOUNT))}/yr`;
 
   return (
     <div className="space-y-8">
       {/* Hero */}
       <section className={`${pane} p-8`}>
         <h1 className="text-3xl md:text-4xl font-semibold text-center">Subscribe</h1>
-        <p className="text-center text-slate-300 mt-2">Choose the plan that's right for you.</p>
+        <p className="text-center text-slate-300 mt-2">Choose the plan that matches your stack.</p>
 
         {/* Toggle */}
         <div className="mt-4 flex items-center justify-center gap-2">
           <button
-            onClick={() => setYearly(false)}
-            className={`px-3 py-1.5 rounded-xl border text-sm ${!yearly ? "bg-white text-black" : "border-white/10 text-slate-300"}`}
+            onClick={() => setBillingCycle("monthly")}
+            className={`px-3 py-1.5 rounded-xl border text-sm ${billingCycle === "monthly" ? "bg-white text-black" : "border-white/10 text-slate-300"}`}
           >
             Monthly
           </button>
           <button
-            onClick={() => setYearly(true)}
-            className={`px-3 py-1.5 rounded-xl border text-sm ${yearly ? "bg-white text-black" : "border-white/10 text-slate-300"}`}
+            onClick={() => setBillingCycle("yearly")}
+            className={`px-3 py-1.5 rounded-xl border text-sm flex items-center gap-1 ${
+              billingCycle === "yearly" ? "bg-white text-black" : "border-white/10 text-slate-300"
+            }`}
           >
-            Yearly
+            Yearly <span className="text-[11px] text-emerald-400 font-medium">Save 15%</span>
           </button>
         </div>
 
         {/* Cards */}
         <div className="mt-6 grid md:grid-cols-3 gap-4">
-          <PriceCard name="Basic" price={yearly ? "100" : "9.99"} period={yearly ? "/year" : "/mo"}>
+          <PriceCard
+            name="Basic"
+            subtitle="Solo explorers getting started"
+            priceLabel="Free"
+            features={[
+              "Daily AI guidance & check-ins",
+              "Foundational sleep & nutrition cues",
+              "Email summaries each week",
+              "Community updates",
+            ]}
+          >
             <Link href="/subscribe" className="inline-block w-full text-center px-4 py-2 rounded-xl border border-white/10 hover:bg-white/5">
               Get Started
             </Link>
           </PriceCard>
 
-          <PriceCard name="Pro" price={yearly ? "150" : "14.99"} period={yearly ? "/year" : "/mo"} highlight>
+          <PriceCard
+            name="Pro"
+            subtitle="Wearables + full tool stack"
+            priceLabel={proPriceLabel}
+            highlight
+            features={[
+              "All Basic benefits",
+              "Wearables sync (Oura, Apple Health, Garmin)",
+              "Full tool suite: protocols, sleep & meal planners",
+              "Priority support & faster responses",
+            ]}
+          >
             <Link
               href="/subscribe"
               className="inline-block w-full text-center px-4 py-2 rounded-xl
@@ -93,7 +127,17 @@ export default function PricingPage() {
             </Link>
           </PriceCard>
 
-          <PriceCard name="Enterprise" price={yearly ? "500" : "49.99"} period={yearly ? "/year" : "/mo"}>
+          <PriceCard
+            name="Enterprise"
+            subtitle="Teams, clinics & corporate wellness"
+            priceLabel={enterprisePriceLabel}
+            features={[
+              "Everything in Pro",
+              "Company SSO & role-based admin controls",
+              "Hook into internal data lakes & HR/wellness apps",
+              "Dedicated success architect + SLA",
+            ]}
+          >
             <Link href="/contact" className="inline-block w-full text-center px-4 py-2 rounded-xl border border-white/10 hover:bg-white/5">
               Contact Sales
             </Link>

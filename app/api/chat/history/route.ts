@@ -57,27 +57,76 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const threadId = searchParams.get("threadId");
-
-    if (!threadId) {
-      return createErrorResponse("threadId is required", requestId, 400);
-    }
+    const listAll = searchParams.get("listAll") === "true";
 
     try {
       const pool = getDbPool();
       
-      // Get user ID
-      const user = await queryOne<{ id: string }>(
+      // Get or create user ID
+      let user = await queryOne<{ id: string }>(
         "SELECT id FROM users WHERE clerk_user_id = $1",
         [userId]
       );
 
       if (!user) {
+        // Create user if they don't exist
+        try {
+          const result = await query<{ id: string }>(
+            "INSERT INTO users (clerk_user_id) VALUES ($1) RETURNING id",
+            [userId]
+          );
+          user = result[0];
+          logger.info("Created user record for chat history", { userId, userDbId: user.id });
+        } catch (createError) {
+          logger.warn("Failed to create user record for chat history", { error: createError, userId });
+          return Response.json({
+            success: true,
+            data: listAll ? { threads: [] } : { messages: [] },
+            requestId,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+
+      // If listAll=true, return all threads for the user
+      if (listAll) {
+        const threads = await query<{
+          thread_id: string;
+          first_message: string;
+          last_message_at: Date;
+          message_count: number;
+        }>(
+          `SELECT 
+            thread_id,
+            MIN(CASE WHEN role = 'user' THEN content END) as first_message,
+            MAX(created_at) as last_message_at,
+            COUNT(*) as message_count
+           FROM chat_messages 
+           WHERE user_id = $1 
+           GROUP BY thread_id 
+           ORDER BY last_message_at DESC 
+           LIMIT 50`,
+          [user.id]
+        );
+
         return Response.json({
           success: true,
-          data: { messages: [] },
+          data: {
+            threads: threads.map(t => ({
+              id: t.thread_id,
+              title: (t.first_message || "New chat").slice(0, 36),
+              createdAt: t.last_message_at.toISOString(),
+              messageCount: Number(t.message_count),
+            })),
+          },
           requestId,
           timestamp: new Date().toISOString(),
         });
+      }
+
+      // Otherwise, get messages for specific thread
+      if (!threadId) {
+        return createErrorResponse("threadId is required when listAll is false", requestId, 400);
       }
 
       // Get messages for thread
@@ -108,7 +157,7 @@ export async function GET(req: Request) {
         logger.warn("Database not configured, returning empty history", { userId, requestId });
         return Response.json({
           success: true,
-          data: { messages: [] },
+          data: listAll ? { threads: [] } : { messages: [] },
           requestId,
           timestamp: new Date().toISOString(),
         });

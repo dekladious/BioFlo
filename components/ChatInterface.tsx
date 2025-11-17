@@ -206,38 +206,102 @@ export default function ChatInterface() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
-  // Load threads and folders from localStorage on mount
+  // Load threads and folders from database and localStorage on mount
   useEffect(() => {
-    try {
-      const storedThreads = localStorage.getItem("bioflo-threads");
-      if (storedThreads) {
-        const parsed = JSON.parse(storedThreads);
-        setThreads(parsed);
-        // Try to load from database if available
-        fetch("/api/chat/history?threadId=" + (parsed[0]?.id || ""))
-          .then(r => r.json())
-          .then(data => {
-            if (data.success && data.data?.messages?.length > 0) {
-              // Update thread with database messages if available
-              const dbThread = { id: parsed[0]?.id, title: parsed[0]?.title, createdAt: parsed[0]?.createdAt, messages: data.data.messages, folderId: parsed[0]?.folderId };
-              setThreads([dbThread, ...parsed.slice(1)]);
+    async function loadThreads() {
+      try {
+        // First, try to load all threads from database
+        const dbResponse = await fetch("/api/chat/history?listAll=true");
+        if (dbResponse.ok) {
+          const dbData = await dbResponse.json();
+          if (dbData.success && dbData.data?.threads?.length > 0) {
+            // Convert database threads to Thread format
+            const dbThreads: Thread[] = await Promise.all(
+              dbData.data.threads.map(async (t: { id: string; title: string; createdAt: string }) => {
+                // Load messages for each thread
+                const msgResponse = await fetch(`/api/chat/history?threadId=${t.id}`);
+                if (msgResponse.ok) {
+                  const msgData = await msgResponse.json();
+                  return {
+                    id: t.id,
+                    title: t.title,
+                    createdAt: new Date(t.createdAt).getTime(),
+                    messages: msgData.success ? msgData.data.messages || [] : [],
+                    folderId: null,
+                  };
+                }
+                return {
+                  id: t.id,
+                  title: t.title,
+                  createdAt: new Date(t.createdAt).getTime(),
+                  messages: [],
+                  folderId: null,
+                };
+              })
+            );
+            
+            // Merge with localStorage threads (prefer database, but keep folder assignments from localStorage)
+            const storedThreads = localStorage.getItem("bioflo-threads");
+            if (storedThreads) {
+              try {
+                const localThreads: Thread[] = JSON.parse(storedThreads);
+                // Merge: use DB threads but preserve folder assignments from localStorage
+                const merged = dbThreads.map(dbThread => {
+                  const local = localThreads.find(t => t.id === dbThread.id);
+                  return { ...dbThread, folderId: local?.folderId || null };
+                });
+                // Add any localStorage-only threads (not in DB yet)
+                const dbIds = new Set(dbThreads.map(t => t.id));
+                const localOnly = localThreads.filter(t => !dbIds.has(t.id));
+                setThreads([...merged, ...localOnly]);
+              } catch {
+                setThreads(dbThreads);
+              }
+            } else {
+              setThreads(dbThreads);
             }
-          })
-          .catch(() => {
-            // Database not available, use localStorage only
-          });
+          } else {
+            // No DB threads, try localStorage
+            const storedThreads = localStorage.getItem("bioflo-threads");
+            if (storedThreads) {
+              setThreads(JSON.parse(storedThreads));
+            }
+          }
+        } else {
+          // Database not available, use localStorage
+          const storedThreads = localStorage.getItem("bioflo-threads");
+          if (storedThreads) {
+            setThreads(JSON.parse(storedThreads));
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to load threads from database", e);
+        // Fallback to localStorage
+        try {
+          const storedThreads = localStorage.getItem("bioflo-threads");
+          if (storedThreads) {
+            setThreads(JSON.parse(storedThreads));
+          }
+        } catch (localError) {
+          console.warn("Failed to load from localStorage", localError);
+        }
       }
       
-      const storedFolders = localStorage.getItem("bioflo-folders");
-      if (storedFolders) {
-        const parsed = JSON.parse(storedFolders);
-        setFolders(parsed);
-        // Expand all folders by default
-        setExpandedFolders(new Set(parsed.map((f: Folder) => f.id)));
+      // Load folders from localStorage
+      try {
+        const storedFolders = localStorage.getItem("bioflo-folders");
+        if (storedFolders) {
+          const parsed = JSON.parse(storedFolders);
+          setFolders(parsed);
+          // Expand all folders by default
+          setExpandedFolders(new Set(parsed.map((f: Folder) => f.id)));
+        }
+      } catch (e) {
+        console.warn("Failed to load folders from localStorage", e);
       }
-    } catch (e) {
-      console.warn("Failed to load from localStorage", e);
     }
+    
+    loadThreads();
   }, []);
 
   // Save threads to localStorage whenever they change
@@ -371,7 +435,18 @@ export default function ChatInterface() {
       const contentType = response.headers.get("content-type") || "";
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+        let errorData: any = {};
+        try {
+          errorData = await response.clone().json();
+        } catch {
+          try {
+            const text = await response.text();
+            errorData = text ? { message: text } : {};
+          } catch {
+            errorData = {};
+          }
+        }
+
         const errorMsg = errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}`;
         console.error("API Error:", {
           status: response.status,
@@ -512,9 +587,12 @@ export default function ChatInterface() {
   ];
 
   return (
-    <div className="w-full grid gap-4
-                grid-cols-1
-                md:grid-cols-[240px_minmax(1000px,1fr)_280px]">
+    <div
+      className="w-full mx-auto max-w-6xl grid gap-4
+                 grid-cols-1
+                 lg:grid-cols-[260px_minmax(0,1fr)]
+                 2xl:grid-cols-[260px_minmax(0,1fr)_320px]"
+    >
       {/* SIDEBAR */}
       <aside className={`${pane} p-3 h-[72vh] flex flex-col`}>
         <div className="flex items-center justify-between mb-2 px-1">
@@ -761,7 +839,7 @@ export default function ChatInterface() {
       </section>
 
       {/* TOOLS PANEL */}
-      <aside className={`${pane} hidden md:flex p-4 h-[72vh]`}>
+      <aside className={`${pane} hidden 2xl:flex p-4 h-[72vh]`}>
         <div className="text-sm text-slate-300">
           <div className="font-medium">Tools</div>
           <p className="text-slate-400 text-xs mt-1">

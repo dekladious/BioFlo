@@ -12,7 +12,7 @@ Based on the provided architecture diagram, here's how our current implementatio
 - ✅ **Sign-in (Clerk)** - Implemented in `app/sign-in`
 - ✅ **Sign-in (Stripe Checkout)** - Implemented in `app/subscribe`
 
-### 2. **Core BioFlo Agent SAas**
+### 2. **Core BioFlo Agent SAAS**
 
 #### Authentication & Payments
 - ✅ **Clerk (Cheowi)** - Implemented via `@clerk/nextjs`
@@ -31,8 +31,7 @@ Based on the provided architecture diagram, here's how our current implementatio
   - Returns 402 if not subscribed
 
 - ✅ **Model Router** - Implemented in `lib/ai/modelRouter.ts`
-  - Supports OpenAI and Anthropic
-  - **⚠️ ISSUE: Currently defaults to OpenAI, but architecture shows Anthropic Claude 4.5 should be PRIMARY**
+  - Supports OpenAI GPT‑5 (primary) with Anthropic Claude 4.5 fallback
 
 - ✅ **Tool Registry** - Implemented in `lib/ai/tools/index.ts`
   - Tool registration system
@@ -62,14 +61,13 @@ Based on the provided architecture diagram, here's how our current implementatio
 
 ### 1. **AI Provider Flow**
 **Current Implementation:**
-- Model Router defaults to OpenAI
-- OpenAI used for all chat requests
+- Model Router defaults to OpenAI GPT‑5 with Anthropic fallback
 
-**Architecture Spec:**
-- **Anthropic Claude 4.5** should be PRIMARY (used by Model Router)
-- **OpenAI** should be used by Feature Gate for subscription checks (or other validation)
+**Architecture Spec Update:**
+- GPT‑5 acts as the main reasoning model (per latest decision)
+- Anthropic Claude 4.5 provides resilience when GPT‑5 is busy or rate-limited
 
-**Action Required:** Change default provider to Anthropic Claude 4.5
+**Action:** Confirm both API keys are configured in `.env.local`
 
 ### 2. **Backend Services (AD & Services)**
 

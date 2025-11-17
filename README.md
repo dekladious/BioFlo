@@ -6,12 +6,13 @@ Enterprise-grade Next.js application with authentication, subscription managemen
 
 - ✅ **Authentication** - Clerk integration with secure user management
 - ✅ **Subscription Management** - Stripe integration with £14.99/month subscriptions
-- ✅ **AI Chat** - OpenAI GPT-4o powered biohacking assistant
+- ✅ **AI Chat** - OpenAI GPT‑5 primary with Claude 4.5 fallback + streaming responses
 - ✅ **Rate Limiting** - Protection against API abuse
 - ✅ **Security** - Enterprise-grade security headers and best practices
 - ✅ **Error Handling** - Comprehensive error boundaries and logging
 - ✅ **Type Safety** - Full TypeScript support
 - ✅ **Request Tracking** - Request ID tracking for observability
+- ✅ **Knowledge Base Ready** - pgvector-backed `documents` table for RAG context
 
 ## Tech Stack
 
@@ -20,7 +21,8 @@ Enterprise-grade Next.js application with authentication, subscription managemen
 - **Styling:** Tailwind CSS v4
 - **Authentication:** Clerk
 - **Payments:** Stripe
-- **AI:** OpenAI GPT-4o
+- **AI:** OpenAI GPT‑5 (primary) + Anthropic Claude 4.5 fallback
+- **Vector Search:** pgvector (1536-dim embeddings)
 - **Package Manager:** pnpm
 
 ## Getting Started
@@ -31,7 +33,8 @@ Enterprise-grade Next.js application with authentication, subscription managemen
 - pnpm
 - Clerk account
 - Stripe account
-- OpenAI API key
+- OpenAI API key (GPT-5 access)
+- Anthropic API key (fallback, optional but recommended)
 
 ### Installation
 
@@ -48,12 +51,17 @@ Enterprise-grade Next.js application with authentication, subscription managemen
 
 4. Fill in your API keys in `.env.local`
 
-5. Run the development server:
+5. (Optional) Provision the database schema locally:
+   ```bash
+   pnpm db:setup
+   ```
+
+6. Run the development server:
    ```bash
    pnpm dev
    ```
 
-6. Open [http://localhost:3000](http://localhost:3000)
+7. Open [http://localhost:3000](http://localhost:3000)
 
 ## Project Structure
 
@@ -81,6 +89,7 @@ See `.env.example` for required variables.
 - `POST /api/stripe/webhook` - Stripe webhook handler
 - `GET /api/stripe/check-status` - Check subscription status
 - `GET /api/health` - Health check
+- `POST /api/chat/history` - Persist chat threads (internal)
 
 ## Security Features
 
@@ -96,6 +105,22 @@ See `.env.example` for required variables.
 1. Set environment variables in your hosting platform
 2. Run `pnpm build`
 3. Deploy to Vercel, Railway, or your preferred platform
+
+## Knowledge Base Ingestion (RAG)
+
+The `documents` table stores protocol snippets and long-form references with embeddings. Use the ingestion script to add new files:
+
+```bash
+node scripts/ingest-documents.js ./knowledge/sleep.md --title "Sleep Foundations"
+```
+
+Flags:
+- `--title` – override the title (defaults to file name)
+- `--user-id` – assign to a specific `users.id` (omit for global/shared)
+- `--user` – look up `users.id` from a Clerk `userId`
+- `--visibility` – `global` (default) or `private`
+
+Each chunk is embedded with `text-embedding-3-small` and stored in Postgres via pgvector, ready for retrieval inside `/api/chat`.
 
 ## License
 

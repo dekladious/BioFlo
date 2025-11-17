@@ -33,22 +33,38 @@ export function Onboarding({ onComplete }: { onComplete: (data: OnboardingData) 
   }
 
   async function handleComplete() {
-    // Save to profile API
+    // Save to onboarding API (triggers AI assessment)
     try {
-      await fetch("/api/profile", {
-        method: "PUT",
+      const response = await fetch("/api/onboarding", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prefs: {
+          goals: {
+            healthGoals: data.healthGoals || [],
+            dietaryPreference: data.dietaryPreference,
+            activityLevel: data.activityLevel,
+          },
+          struggles: [], // Can be enhanced later with a dedicated struggles step
+          preferences: {
             dietaryPreference: data.dietaryPreference || null,
             fastingProtocol: data.fastingProtocol || null,
             sleepGoalHours: data.sleepGoalHours || null,
             activityLevel: data.activityLevel || null,
             biohackingExperience: data.biohackingExperience || null,
+            healthGoals: data.healthGoals || [],
           },
-          goals: data.healthGoals || null,
         }),
       });
+
+      if (!response.ok) {
+        throw new Error("Failed to save onboarding data");
+      }
+
+      const result = await response.json();
+      // Store session ID for chat continuity
+      if (result.data?.sessionId) {
+        localStorage.setItem("bioflo-session-id", result.data.sessionId);
+      }
     } catch (error) {
       console.error("Failed to save onboarding data", error);
     }
