@@ -6,6 +6,10 @@
  */
 
 import { BIOFLO_SYSTEM_PROMPT } from "./policy";
+import { SLEEP_COACH_SYSTEM_PROMPT } from "./prompts/sleepCoach";
+import { BIOFLO_MASTER_SYSTEM_PROMPT } from "./prompts/master";
+import { getTopicModule } from "./prompts/topicModules";
+import { USER_ADAPTATION_INSTRUCTIONS, RAG_CONTEXT_INSTRUCTIONS } from "./prompts/adaptation";
 
 export type CoachContext = {
   userProfile?: string;
@@ -15,6 +19,7 @@ export type CoachContext = {
   knowledgeSnippets?: string;
   todayMode?: string;
   recentMessages?: string;
+  sleepMode?: boolean;
 };
 
 /**
@@ -25,6 +30,33 @@ export function buildMainCoachPrompt(
   context: CoachContext,
   latestUserMessage: string
 ): { system: string; user: string } {
+  // Use sleep coach prompt if in sleep mode, otherwise use master prompt
+  let baseSystemPrompt = context.sleepMode ? SLEEP_COACH_SYSTEM_PROMPT : BIOFLO_MASTER_SYSTEM_PROMPT;
+  
+  // Get relevant topic module based on user query
+  const topicModule = getTopicModule(latestUserMessage);
+  
+  // Build system prompt with topic module if applicable
+  let systemPrompt = baseSystemPrompt;
+  if (topicModule && !context.sleepMode) {
+    systemPrompt = `${baseSystemPrompt}\n\n${topicModule}`;
+  }
+  
+  // Add adaptation instructions
+  systemPrompt = `${systemPrompt}\n\n${USER_ADAPTATION_INSTRUCTIONS}`;
+  
+  // Format RAG context block if present
+  let ragContextBlock = "";
+  if (context.knowledgeSnippets) {
+    if (context.sleepMode) {
+      // Sleep-specific context formatting
+      ragContextBlock = `\n\nSLEEP CONTEXT (expert sleep notes, paraphrase and integrate, do not quote verbatim):\n\n${context.knowledgeSnippets}`;
+    } else {
+      // General RAG context with instructions
+      ragContextBlock = `\n\n${RAG_CONTEXT_INSTRUCTIONS}\n\nRAG_CONTEXT\n${context.knowledgeSnippets}`;
+    }
+  }
+  
   const userPrompt = `You are replying as the BioFlo coach in an ongoing conversation.
 
 Here is the contextual information you have about the user:
@@ -40,16 +72,7 @@ ${context.wearableSummary || "No wearable data available"}
 
 [PROTOCOL_STATUS]
 ${context.protocolStatus || "No active protocols"}
-
-[KNOWLEDGE_SNIPPETS]
-${context.knowledgeSnippets || "No relevant knowledge snippets"}
-
-When [KNOWLEDGE_SNIPPETS] contains longevity knowledge:
-- Use these snippets as primary factual guidance when answering longevity-related questions.
-- You may summarise and combine them in your own voice.
-- Do NOT claim to be Peter Attia or reference MasterClass; this is BioFlo's own framework inspired by general longevity science.
-- Do NOT provide medical diagnoses, medication recommendations, or personalised screening schedules.
-- When discussing disease, labs, or medications, clearly state that this is general educational information and recommend involving the user's doctor for decisions.
+${ragContextBlock}
 
 [RECENT_MESSAGES]
 ${context.recentMessages || "No recent conversation history"}
@@ -80,7 +103,7 @@ STYLE
 - Stay under ~500–800 words unless a detailed explanation is clearly requested.`;
 
   return {
-    system: BIOFLO_SYSTEM_PROMPT,
+    system: systemPrompt,
     user: userPrompt,
   };
 }

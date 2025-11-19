@@ -60,7 +60,6 @@ export async function generateCoachReply(
   logger.info("AI Gateway: Triage result", {
     category: triage.category,
     reason: triage.reason,
-    userId: context.userId,
   });
 
   // Step 2: Route based on triage category
@@ -119,7 +118,6 @@ async function handleMainCoachReply(
     if (!safetyReview.safe) {
       logger.warn("AI Gateway: Safety review flagged response", {
         issues: safetyReview.issues,
-        userId: context.userId,
       });
       // Return a safer fallback message
       return `I understand you're looking for guidance. However, I want to make sure I'm providing safe, appropriate advice.
@@ -133,10 +131,10 @@ What specific area would you like to focus on?`;
 
     return fullResponse;
   } catch (error) {
-    logger.error("AI Gateway: Coach reply failed", { error, userId: context.userId });
+    logger.error("AI Gateway: Coach reply failed", { error });
     if (error instanceof ModelError && error.provider === "openai") {
       // Fallback to Claude 4.5
-      logger.warn("AI Gateway: Falling back to Claude 4.5", { userId: context.userId });
+      logger.warn("AI Gateway: Falling back to Claude 4.5");
       await streamModel({
         provider: "anthropic",
         system,
@@ -310,7 +308,7 @@ export async function generateTodayPlan(
     }
     throw new Error("Failed to parse plan JSON");
   } catch (error) {
-    logger.error("AI Gateway: Today plan generation failed", { error, userId: context.userId });
+    logger.error("AI Gateway: Today plan generation failed", { error });
     // Fallback to GPT-5 if Claude fails
     if (error instanceof ModelError && error.provider === "anthropic") {
       await streamModel({

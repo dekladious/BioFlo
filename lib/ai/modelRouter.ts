@@ -3,8 +3,71 @@ import Anthropic from "@anthropic-ai/sdk";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { retryWithBackoff } from "@/lib/api-utils";
+import type { RequestClassification } from "./classifier";
 
 type Provider = "openai" | "anthropic";
+
+export type ModelChoice = {
+  mainModel: string; // openai model name
+  judgeModel?: string; // anthropic model name
+  useJudge: boolean;
+};
+
+/**
+ * Choose which models to use based on request classification
+ */
+export function chooseModels(
+  cls: RequestClassification
+): ModelChoice {
+  const cheapModel = env.openai.cheapModel();
+  const expensiveModel = env.openai.expensiveModel();
+  const judgeModel = env.anthropic.judgeModel();
+
+  // Default to cheap model
+  let mainModel = cheapModel;
+
+  // Switch to expensive model if:
+  // - High complexity
+  // - Medium or high risk
+  // - Specific high-stakes topics
+  if (
+    cls.complexity === "high" ||
+    cls.risk !== "low" ||
+    [
+      "wearable_analysis",
+      "metrics_analysis",
+      "condition_support",
+      "fasting",
+      "sauna_cold",
+      "supplements_safety",
+    ].includes(cls.topic)
+  ) {
+    mainModel = expensiveModel;
+  }
+
+  // Use judge if:
+  // - Medium or high risk
+  // - Specific high-stakes topics
+  const useJudge =
+    cls.risk === "medium" ||
+    cls.risk === "high" ||
+    [
+      "wearable_analysis",
+      "metrics_analysis",
+      "condition_support",
+      "fasting",
+      "sauna_cold",
+      "supplements_safety",
+      "emotional_crisis",
+      "medical_acute",
+    ].includes(cls.topic);
+
+  return {
+    mainModel,
+    judgeModel: useJudge ? judgeModel : undefined,
+    useJudge,
+  };
+}
 
 export type RunModelArgs = {
   provider?: Provider;
@@ -22,7 +85,7 @@ export type StreamModelArgs = RunModelArgs & {
 // Default models (latest stable versions)
 export const DEFAULT_MODELS = {
   openai: "gpt-5", // GPT‑5 (primary)
-  anthropic: "claude-sonnet-4-20250514", // Claude 4.5 Sonnet (fallback)
+  anthropic: "claude-4-5-sonnet", // Claude 4.5 Sonnet (fallback)
 } as const;
 
 // Custom error classes for better error handling

@@ -2,9 +2,15 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { randomUUID } from "crypto";
 import { ModelError, streamModel } from "@/lib/ai/modelRouter";
 import { detectToolFromUserText, getTool } from "@/lib/ai/tools";
-import { generateCoachReply, CoachContext } from "@/lib/ai/gateway";
-import { triageUserMessage } from "@/lib/ai/safety";
-import { retrieveRelevantContext, getRelevantLongevityDocs, formatLongevityKnowledgeSnippets } from "@/lib/ai/rag";
+import { classifyRequest } from "@/lib/ai/classifier";
+import { chooseModels } from "@/lib/ai/modelRouter";
+import { buildRagContext, retrieveRelevantContext, getRelevantLongevityDocs, formatLongevityKnowledgeSnippets, getSleepContext, formatSleepContext, isSleepQuery } from "@/lib/ai/rag";
+import { buildSystemPrompt } from "@/lib/ai/systemPrompt";
+import { judgeAnswer, rewriteUnsafeAnswer } from "@/lib/ai/safety";
+import { generateWithFallback } from "@/lib/ai/fallback";
+import { buildTriageForBlocked, buildGenericSafeAnswer } from "@/lib/ai/triage";
+import { getAiUserId } from "@/lib/analytics/userId";
+import { logAnalyticsEvent, logApiError } from "@/lib/analytics/logging";
 import { CHAT, RATE_LIMITS } from "@/lib/constants";
 import { logger } from "@/lib/logger";
 import { rateLimit, getRateLimitIdentifier } from "@/lib/rate-limit";
@@ -126,14 +132,15 @@ export async function POST(req: Request) {
     // Paywall check
     const user = await currentUser();
     const isPro = Boolean((user?.publicMetadata as ClerkPublicMetadata)?.isPro);
-    if (!isPro) {
+    const bypassPaywall = process.env.BYPASS_PAYWALL === "true"; // For development/testing
+    if (!isPro && !bypassPaywall) {
       logger.info("Chat API: Subscription required", { userId, requestId });
       return createErrorResponse("Subscription required", requestId, 402);
     }
 
     // Parse and validate request body
     const body = await req.json();
-    const { messages, sessionId: incomingSessionId } = body;
+    const { messages, sessionId: incomingSessionId, domain } = body;
     const sessionIdForHistory = incomingSessionId || randomUUID();
     
     // Input validation
@@ -1244,55 +1251,144 @@ export async function POST(req: Request) {
       );
       if (userRecord) {
         userDbId = userRecord.id;
+        // Ensure main_struggles is always an array (it might be stored as JSONB object or string)
+        const struggles = userRecord.main_struggles;
+        const strugglesArray = Array.isArray(struggles) 
+          ? struggles 
+          : typeof struggles === "string" 
+            ? JSON.parse(struggles || "[]")
+            : struggles && typeof struggles === "object"
+              ? Object.values(struggles)
+              : [];
+        
         userProfile = {
           goals: userRecord.goals || {},
-          main_struggles: userRecord.main_struggles || [],
+          main_struggles: strugglesArray,
         };
       }
     } catch (dbError) {
       logger.debug("Chat API: Failed to load user profile", { error: dbError, userId, requestId });
     }
 
-    // Retrieve RAG context (relevant protocol documents)
-    let ragContext = "";
-    try {
-      ragContext = await retrieveRelevantContext({
-        queryText: userContent,
-        userId: userDbId,
-        limit: 5,
+    // Generate pseudonymous AI user ID for analytics
+    const aiUserId = getAiUserId(userId, ip);
+
+    // Step 1: Classify request (V2 Pipeline)
+    const classification = await classifyRequest(userContent);
+    logger.debug("Chat API: Request classified", {
+      userId,
+      classification,
+      requestId,
+    });
+
+    // Step 2: Pre-answer safety gate
+    if (!classification.allow_answer) {
+      const triageMessage = buildTriageForBlocked(
+        classification.topic,
+        classification.risk
+      );
+
+      // Log triage event
+      await logAnalyticsEvent({
+        aiUserId,
+        eventType: "chat_triage",
+        sessionId: sessionIdForHistory,
+        topic: classification.topic,
+        risk: classification.risk,
+        complexity: classification.complexity,
+        success: false,
+        metadata: { reason: "allow_answer=false" },
+      }).catch(() => {}); // Don't block on analytics
+
+      return createStreamResponse({
+        requestId,
+        headers: responseHeaders,
+        streamHandler: async (send) => {
+          send({ type: "meta", sessionId: sessionIdForHistory });
+          await streamTextChunks(triageMessage, send);
+          send({ type: "done", sessionId: sessionIdForHistory });
+        },
       });
-      if (ragContext) {
-        logger.debug("Chat API: RAG context retrieved", {
-          userId,
-          contextLength: ragContext.length,
-          requestId,
-        });
-      }
-    } catch (ragError) {
-      logger.warn("Chat API: RAG retrieval failed", { error: ragError, userId, requestId });
-      // Continue without RAG context if retrieval fails
     }
 
-    // Retrieve longevity knowledge base documents
+    // Step 3: Build RAG context (combine all sources)
+    let combinedRagContext = "";
+    let ragSources: { id: number; title: string | null; similarity: number }[] = [];
+
+    // Detect sleep mode (from domain parameter or query content)
+    const sleepMode = domain === "sleep" || isSleepQuery(userContent);
+
+    // Retrieve sleep context (Matthew Walker content) if in sleep mode
+    let sleepContext = "";
+    if (sleepMode) {
+      try {
+        const sleepDocs = await getSleepContext(userContent, 8);
+        if (sleepDocs.length > 0) {
+          sleepContext = formatSleepContext(sleepDocs);
+          ragSources.push(...sleepDocs.map(d => ({ id: typeof d.id === "number" ? d.id : parseInt(String(d.id || 0), 10), title: d.title || null, similarity: d.similarity })));
+          logger.debug("Chat API: Sleep context retrieved", {
+            userId,
+            docCount: sleepDocs.length,
+            requestId,
+          });
+        }
+      } catch (sleepError) {
+        logger.warn("Chat API: Sleep context retrieval failed", { error: sleepError, userId, requestId });
+      }
+    }
+
+    // Retrieve longevity knowledge base documents (only if not in sleep mode)
     let longevityKnowledge = "";
-    try {
-      const longevityDocs = await getRelevantLongevityDocs(userContent, {
-        limit: 8,
-      });
-      if (longevityDocs.length > 0) {
-        longevityKnowledge = formatLongevityKnowledgeSnippets(longevityDocs);
-        logger.debug("Chat API: Longevity knowledge retrieved", {
-          userId,
-          docCount: longevityDocs.length,
-          requestId,
+    if (!sleepMode && classification.needs_rag) {
+      try {
+        const longevityDocs = await getRelevantLongevityDocs(userContent, {
+          limit: 8,
         });
+        if (longevityDocs.length > 0) {
+          longevityKnowledge = formatLongevityKnowledgeSnippets(longevityDocs);
+          ragSources.push(...longevityDocs.map(d => ({ id: typeof d.id === "number" ? d.id : parseInt(String(d.id || 0), 10), title: d.title || null, similarity: d.similarity })));
+          logger.debug("Chat API: Longevity knowledge retrieved", {
+            userId,
+            docCount: longevityDocs.length,
+            requestId,
+          });
+        }
+      } catch (longevityError) {
+        logger.warn("Chat API: Longevity knowledge retrieval failed", { error: longevityError, userId, requestId });
       }
-    } catch (longevityError) {
-      logger.warn("Chat API: Longevity knowledge retrieval failed", { error: longevityError, userId, requestId });
-      // Continue without longevity knowledge if retrieval fails
     }
 
-    // Build context for AI Gateway
+    // Retrieve general RAG context if needed
+    let generalRagContext = "";
+    if (classification.needs_rag && !sleepContext && !longevityKnowledge) {
+      try {
+        const ragResult = await buildRagContext(
+          userContent,
+          userDbId,
+          6
+        );
+        generalRagContext = ragResult.context;
+        ragSources.push(...ragResult.sources);
+        logger.debug("Chat API: General RAG context retrieved", {
+          userId,
+          contextLength: generalRagContext.length,
+          requestId,
+        });
+      } catch (ragError) {
+        logger.warn("Chat API: RAG retrieval failed", { error: ragError, userId, requestId });
+      }
+    }
+
+    // Combine all RAG contexts (prioritize sleep > longevity > general)
+    combinedRagContext = sleepContext || longevityKnowledge || generalRagContext || "";
+
+    // Step 4: Choose models
+    const modelChoice = chooseModels(classification);
+
+    // Step 5: Build system prompt with RAG context
+    const systemPrompt = buildSystemPrompt(combinedRagContext);
+
+    // Step 6: Prepare messages for LLM
     const normalizedMessages = messages
       .slice(-20)
       .map((m) => ({
@@ -1300,7 +1396,12 @@ export async function POST(req: Request) {
         content: m.content,
       }));
 
-    // Get protocol status
+    const llmMessages = [
+      { role: "system" as const, content: systemPrompt },
+      ...normalizedMessages,
+    ];
+
+    // Get protocol status for context
     let protocolStatus = undefined;
     if (userDbId) {
       try {
@@ -1311,22 +1412,28 @@ export async function POST(req: Request) {
       }
     }
 
-    // Build context strings for prompt templates
-    const context: CoachContext = {
-      userId,
-      userProfile: userProfile
-        ? `Goals: ${JSON.stringify(userProfile.goals || {})}\nMain struggles: ${(userProfile.main_struggles || []).join(", ")}`
-        : undefined,
-      recentCheckIns: "No recent check-ins available", // TODO: Add actual check-ins
-      wearableSummary: undefined, // TODO: Add wearable summary
-      protocolStatus: protocolStatus || undefined,
-      knowledgeSnippets: longevityKnowledge || ragContext || undefined,
-      recentMessages: normalizedMessages
-        .slice(-5)
-        .map((m) => `${m.role}: ${m.content}`)
-        .join("\n"),
-      todayMode: "NORMAL", // TODO: Get from user preferences
-    };
+    // Build user context string for prompt
+    const userContextString = userProfile
+      ? `Goals: ${JSON.stringify(userProfile.goals || {})}\nMain struggles: ${Array.isArray(userProfile.main_struggles) ? userProfile.main_struggles.join(", ") : JSON.stringify(userProfile.main_struggles || [])}`
+      : "No profile data available";
+
+    const protocolContextString = protocolStatus || "No active protocols";
+
+    // Add user context to the last user message
+    const enhancedMessages = [...llmMessages];
+    if (enhancedMessages.length > 1 && enhancedMessages[enhancedMessages.length - 1].role === "user") {
+      enhancedMessages[enhancedMessages.length - 1] = {
+        role: "user",
+        content: `[USER_CONTEXT]
+${userContextString}
+
+[PROTOCOL_STATUS]
+${protocolContextString}
+
+[USER_MESSAGE]
+${enhancedMessages[enhancedMessages.length - 1].content}`,
+      };
+    }
 
     return createStreamResponse({
       requestId,
@@ -1334,34 +1441,169 @@ export async function POST(req: Request) {
       streamHandler: async (send) => {
         send({ type: "meta", sessionId: sessionIdForHistory });
         let assistantText = "";
+        let judgeVerdict: "SAFE" | "WARN" | "BLOCK" | null = null;
+        const startTime = Date.now();
+
         const onToken = (token: string) => {
           assistantText += token;
           send({ type: "token", value: token });
         };
 
         try {
-          // Use AI Gateway for coach reply (handles triage and routing internally)
-          await generateCoachReply(context, userContent, onToken);
+          // Step 7: Generate answer with fallback (streaming)
+          let assistantDraft: string;
+          
+          // Use streaming model for real-time token delivery
+          try {
+            await streamModel({
+              provider: "openai",
+              model: modelChoice.mainModel,
+              system: systemPrompt,
+              messages: enhancedMessages.filter(m => m.role !== "system"),
+              timeout: 30000,
+              maxTokens: 2000,
+              onToken,
+            });
+            assistantDraft = assistantText;
+          } catch (streamError) {
+            // If streaming fails, try non-streaming fallback
+            logger.warn("Chat API: Streaming failed, trying fallback", {
+              error: streamError instanceof Error ? streamError.message : String(streamError),
+              userId,
+              requestId,
+            });
+            
+            assistantDraft = await generateWithFallback({
+              userQuestion: userContent,
+              systemPrompt,
+              messages: enhancedMessages,
+              mainModel: modelChoice.mainModel,
+              judgeModel: modelChoice.judgeModel,
+            });
+            
+            // Stream the fallback response
+            await streamTextChunks(assistantDraft, send);
+            assistantText = assistantDraft;
+          }
 
-          // Note: Safety review is now handled inside generateCoachReply
+          // Step 8: Run safety judge if needed
+          let finalAnswer = assistantDraft;
+          
+          if (modelChoice.useJudge && modelChoice.judgeModel && assistantDraft) {
+            try {
+              const verdict = await judgeAnswer({
+                userQuestion: userContent,
+                ragContext: combinedRagContext,
+                assistantAnswer: assistantDraft,
+                judgeModel: modelChoice.judgeModel,
+              });
 
+              judgeVerdict = verdict.verdict;
+
+              if (verdict.verdict === "WARN" && verdict.needs_edit) {
+                try {
+                  finalAnswer = await rewriteUnsafeAnswer({
+                    userQuestion: userContent,
+                    ragContext: combinedRagContext,
+                    unsafeAnswer: assistantDraft,
+                    judgeModel: modelChoice.judgeModel,
+                  });
+                  // Replace the streamed content with rewritten version
+                  // Note: This is a limitation - we've already streamed, but we'll update the final answer
+                  assistantText = finalAnswer;
+                } catch (rewriteError) {
+                  logger.warn("Chat API: Rewrite failed, using original", {
+                    error: rewriteError,
+                    userId,
+                    requestId,
+                  });
+                }
+              } else if (verdict.verdict === "BLOCK") {
+                finalAnswer = buildTriageForBlocked(
+                  classification.topic,
+                  classification.risk
+                );
+                assistantText = finalAnswer;
+              }
+            } catch (judgeError) {
+              logger.error("Chat API: Safety judge failed", {
+                error: judgeError,
+                userId,
+                requestId,
+              });
+              await logApiError({
+                aiUserId,
+                endpoint: "/api/chat",
+                errorMessage: judgeError instanceof Error ? judgeError.message : String(judgeError),
+                statusCode: 500,
+              }).catch(() => {});
+            }
+          }
+
+          // Step 9: Log analytics event
+          await logAnalyticsEvent({
+            aiUserId,
+            eventType: "chat_response",
+            sessionId: sessionIdForHistory,
+            topic: classification.topic,
+            risk: classification.risk,
+            complexity: classification.complexity,
+            needsRag: classification.needs_rag,
+            modelUsed: modelChoice.mainModel,
+            usedJudge: modelChoice.useJudge,
+            judgeVerdict,
+            messagesInSession: messages.length,
+            answerLength: finalAnswer.length,
+            ragDocsCount: ragSources.length,
+            ragSources: ragSources.length > 0 ? ragSources : undefined,
+            success: true,
+          }).catch(() => {}); // Don't block on analytics
+
+          // Persist history
           await persistHistory({
             userId,
             sessionId: sessionIdForHistory,
             requestMessages: messages,
-            assistantContent: assistantText,
-            provider: "gateway", // AI Gateway handles provider selection internally
+            assistantContent: finalAnswer,
+            provider: modelChoice.mainModel,
           });
 
+          const latency = Date.now() - startTime;
           logger.info("Chat API: Request completed", {
             userId,
             messageCount: messages.length,
             requestId,
+            latency,
+            modelUsed: modelChoice.mainModel,
+            usedJudge: modelChoice.useJudge,
           });
 
           send({ type: "done", sessionId: sessionIdForHistory });
         } catch (error) {
           logger.error("Chat API streaming error", error, userId);
+          
+          // Log error
+          await logApiError({
+            aiUserId,
+            endpoint: "/api/chat",
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            statusCode: 500,
+          }).catch(() => {});
+
+          // Log analytics failure
+          await logAnalyticsEvent({
+            aiUserId,
+            eventType: "chat_response",
+            sessionId: sessionIdForHistory,
+            topic: classification.topic,
+            risk: classification.risk,
+            complexity: classification.complexity,
+            modelUsed: modelChoice.mainModel,
+            success: false,
+            errorCode: error instanceof Error ? error.message.substring(0, 50) : "unknown",
+          }).catch(() => {});
+
           const message =
             error instanceof Error && process.env.NODE_ENV === "development"
               ? error.message
@@ -1374,7 +1616,20 @@ export async function POST(req: Request) {
     const authResult = await auth().catch(() => ({ userId: null }));
     const userId = authResult.userId;
     
-    logger.error("Chat API error", e, userId);
+    // Log full error details for debugging
+    const errorDetails = e instanceof Error 
+      ? {
+          message: e.message,
+          stack: e.stack,
+          name: e.name,
+        }
+      : { error: String(e) };
+    
+    logger.error("Chat API error", {
+      ...errorDetails,
+      userId,
+      requestId,
+    });
     
     // Check if it's a rate limit error from API provider
     const isRateLimitError = e instanceof Error && 
@@ -1390,18 +1645,25 @@ export async function POST(req: Request) {
     
     // Check if it's an API key error
     const isApiKeyError = e instanceof Error && 
-      (e.message.includes("API key") || e.message.includes("MISSING_API_KEY") || e.message.includes("AUTH_ERROR"));
+      (e.message.includes("API key") || 
+       e.message.includes("MISSING_API_KEY") || 
+       e.message.includes("AUTH_ERROR") ||
+       e.message.includes("401") ||
+       e.message.includes("Unauthorized"));
     
     if (isApiKeyError) {
       return createErrorResponse(
-        "AI API key is missing or invalid. Please check your ANTHROPIC_API_KEY or OPENAI_API_KEY in .env.local",
+        "AI API key is missing or invalid. Please check your OPENAI_API_KEY and ANTHROPIC_API_KEY in .env.local",
         requestId,
         500
       );
     }
     
-    const errorMessage = e instanceof Error && process.env.NODE_ENV === "development" 
-      ? e.message 
+    // In development, show full error message
+    const errorMessage = e instanceof Error 
+      ? (process.env.NODE_ENV === "development" 
+          ? `${e.message}${e.stack ? `\n\nStack: ${e.stack}` : ""}`
+          : "An error occurred. Please try again.")
       : "An error occurred. Please try again.";
     
     return createErrorResponse(errorMessage, requestId, 500);
@@ -1414,25 +1676,79 @@ function createStreamResponse({
   requestId,
   headers,
   streamHandler,
+  abortSignal,
 }: {
   requestId: string;
   headers: Record<string, string>;
   streamHandler: (send: SendFn) => Promise<void>;
+  abortSignal?: AbortSignal;
 }) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
+      // Handle abort signal
+      if (abortSignal) {
+        abortSignal.addEventListener("abort", () => {
+          try {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  requestId,
+                  type: "error",
+                  error: "ERROR_USER_ABORTED_REQUEST",
+                  details: {
+                    title: "User aborted request.",
+                    detail: "Tool call ended before result was received",
+                    isRetryable: false,
+                  },
+                  isExpected: true,
+                }) + "\n"
+              )
+            );
+            controller.close();
+          } catch (e) {
+            // Stream may already be closed
+          }
+        });
+      }
+
       const send: SendFn = (payload) => {
-        controller.enqueue(encoder.encode(JSON.stringify({ requestId, ...payload }) + "\n"));
+        // Check if aborted before sending
+        if (abortSignal?.aborted) {
+          controller.close();
+          return;
+        }
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify({ requestId, ...payload }) + "\n"));
+        } catch (e) {
+          // Stream may be closed
+        }
       };
 
       streamHandler(send)
-        .then(() => controller.close())
+        .then(() => {
+          if (!abortSignal?.aborted) {
+            controller.close();
+          }
+        })
         .catch((error) => {
+          if (abortSignal?.aborted) {
+            // Request was aborted, don't send error
+            controller.close();
+            return;
+          }
           const message = error instanceof Error ? error.message : "Unknown error";
-          send({ type: "error", error: message });
-          controller.close();
+          try {
+            send({ type: "error", error: message });
+            controller.close();
+          } catch (e) {
+            // Stream may already be closed
+          }
         });
+    },
+    cancel() {
+      // Stream was cancelled (e.g., client disconnected)
+      logger.debug("Stream cancelled", { requestId });
     },
   });
 

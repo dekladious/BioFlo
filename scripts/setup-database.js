@@ -36,9 +36,15 @@ if (!DATABASE_URL) {
 async function setupDatabase() {
   console.log("🚀 Setting up BioFlo database...\n");
 
+  // Supabase and most cloud providers require SSL
+  const requiresSSL = DATABASE_URL.includes("supabase") || 
+                      DATABASE_URL.includes("neon") || 
+                      DATABASE_URL.includes("railway") ||
+                      process.env.NODE_ENV === "production";
+  
   const pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+    ssl: requiresSSL ? { rejectUnauthorized: false } : false,
   });
 
   try {

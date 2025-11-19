@@ -1,5 +1,10 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
+  // Disable Turbopack to avoid OneDrive sync issues
+  // Use webpack instead (slower but more stable)
+  experimental: {
+    turbo: false,
+  },
   // Security headers
   async headers() {
     return [

@@ -20,6 +20,18 @@ export type DocumentMatch = {
   similarity: number;
 };
 
+export type RagSource = {
+  id: number;
+  title: string | null;
+  similarity: number;
+  metadata: any;
+};
+
+export type RagResult = {
+  context: string; // formatted text passed into system prompt
+  sources: RagSource[];
+};
+
 export type RiskLevel = "low" | "moderate" | "extreme";
 
 export type DocumentMetadata = {
@@ -94,6 +106,107 @@ export async function searchDocuments({
 
 function toVectorLiteral(values: number[]) {
   return `[${values.map((value) => Number(value).toFixed(6)).join(",")}]`;
+}
+
+/**
+ * Build RAG context from user message
+ * Returns formatted context string and source metadata
+ */
+export async function buildRagContext(
+  userMessage: string,
+  userId: string | null,
+  maxDocs = 6
+): Promise<RagResult> {
+  try {
+    const matches = await searchDocuments({
+      queryText: userMessage,
+      userId,
+      limit: maxDocs,
+      minSimilarity: 0.2,
+    });
+
+    if (matches.length === 0) {
+      return { context: "", sources: [] };
+    }
+
+    // Format context string
+    const contextLines: string[] = [];
+    const sources: RagSource[] = [];
+
+    for (const match of matches) {
+      const source: RagSource = {
+        id: parseInt(match.id) || 0,
+        title: match.title || null,
+        similarity: match.similarity,
+        metadata: match.metadata || {},
+      };
+      sources.push(source);
+
+      const metadata = match.metadata as Record<string, unknown> | null;
+      const sourceLabel = metadata?.source || metadata?.author || "BioFlo";
+      const sectionLabel = match.title || `Doc ${match.id}`;
+
+      contextLines.push(
+        `[Doc ${match.id} | Source: ${sourceLabel} | Section: ${sectionLabel} | similarity: ${match.similarity.toFixed(2)}]`
+      );
+      contextLines.push(match.chunk);
+      contextLines.push(""); // Empty line between docs
+    }
+
+    return {
+      context: contextLines.join("\n"),
+      sources,
+    };
+  } catch (error) {
+    logger.error("RAG context build failed", { error, userMessage: userMessage.substring(0, 100) });
+    return { context: "", sources: [] };
+  }
+}
+
+/**
+ * Check if we can answer from context alone using cheap model
+ */
+export async function canAnswerFromContext(
+  userMessage: string,
+  ragContext: string
+): Promise<boolean> {
+  if (!ragContext.trim()) {
+    return false;
+  }
+
+  try {
+    const { env } = await import("@/lib/env");
+    const OpenAI = (await import("openai")).default;
+    const client = new OpenAI({ apiKey: env.openai.apiKey() });
+
+    const completion = await client.chat.completions.create({
+      model: env.openai.cheapModel(),
+      messages: [
+        {
+          role: "system",
+          content: `You are a fact-checker. Given a question and context, determine if a factual answer can be given from the context alone. Respond ONLY with valid JSON: {"can_answer_from_context": true/false}`,
+        },
+        {
+          role: "user",
+          content: `Question: ${userMessage}\n\nContext:\n${ragContext}\n\nCan a factual answer be given from this context? Respond with JSON only.`,
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 50,
+      response_format: { type: "json_object" },
+    });
+
+    const content = completion.choices[0]?.message?.content;
+    if (!content) {
+      return false;
+    }
+
+    const parsed = JSON.parse(content) as { can_answer_from_context?: boolean };
+    return parsed.can_answer_from_context ?? false;
+  } catch (error) {
+    logger.warn("canAnswerFromContext check failed", { error });
+    return false; // Safe default: assume we can't answer
+  }
 }
 
 /**
@@ -428,5 +541,125 @@ export function formatLongevityKnowledgeSnippets(matches: DocumentMatch[]): stri
   lines.push("");
 
   return lines.join("\n");
+}
+
+/**
+ * Sleep-specific document match type
+ */
+export type SleepDocMatch = {
+  id: string;
+  title: string;
+  chunk: string;
+  metadata: Record<string, unknown> | null;
+  similarity: number;
+};
+
+/**
+ * Fetch top-N sleep-specific documents (Matthew Walker content)
+ */
+export async function getSleepContext(
+  userQuery: string,
+  matchCount: number = 8
+): Promise<SleepDocMatch[]> {
+  try {
+    if (!userQuery?.trim()) {
+      logger.warn("Sleep RAG: Empty query provided");
+      return [];
+    }
+
+    const embedding = await embedText(userQuery);
+    const vectorLiteral = toVectorLiteral(embedding);
+
+    // Query documents directly with vector similarity search
+    // Filter for Matthew Walker sleep content only
+    const rows = await query<DocumentRow>(
+      `
+        SELECT 
+          d.id,
+          d.user_id,
+          d.title,
+          d.chunk,
+          d.metadata,
+          1 - (d.embedding <=> $1::vector) AS similarity
+        FROM documents d
+        WHERE d.embedding IS NOT NULL
+          AND d.metadata->>'source' = 'mw_masterclass'
+          AND d.metadata->>'topic' = 'sleep'
+        ORDER BY d.embedding <=> $1::vector
+        LIMIT $2
+      `,
+      [vectorLiteral, matchCount]
+    );
+
+    // Map results
+    const filtered = rows
+      .map((row) => ({
+        id: row.id,
+        title: row.title,
+        chunk: row.chunk,
+        metadata: row.metadata,
+        similarity: Number(row.similarity) || 0,
+      }))
+      .filter((row) => row.similarity >= 0.2); // Filter out very low similarity matches
+
+    return filtered;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("Sleep RAG search failed", { error: errorMessage, query: userQuery.substring(0, 50) });
+    return []; // Return empty array on error to allow chat to continue
+  }
+}
+
+/**
+ * Format sleep context matches into a plain-text context block for the model
+ */
+export function formatSleepContext(matches: SleepDocMatch[]): string {
+  if (!matches.length) return "";
+
+  const lines: string[] = [];
+
+  for (const m of matches) {
+    const meta = m.metadata || {};
+    const author = meta.author || "Unknown author";
+    const source = meta.source || "";
+    const file = meta.file || "";
+
+    const label = [author, source, file].filter(Boolean).join(" · ");
+
+    lines.push(
+      `SOURCE: ${label}\nTITLE: ${m.title}\nSIMILARITY: ${m.similarity.toFixed(3)}\nCONTENT:\n${m.chunk}`
+    );
+  }
+
+  return lines.join("\n\n---\n\n");
+}
+
+/**
+ * Detect if a user query is sleep-related
+ */
+export function isSleepQuery(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("sleep") ||
+    lower.includes("insomnia") ||
+    lower.includes("night shift") ||
+    lower.includes("chronotype") ||
+    lower.includes("wake up") ||
+    lower.includes("fall asleep") ||
+    lower.includes("can't sleep") ||
+    lower.includes("cant sleep") ||
+    lower.includes("dreams") ||
+    lower.includes("nightmare") ||
+    lower.includes("caffeine") ||
+    lower.includes("coffee") ||
+    lower.includes("nap") ||
+    lower.includes("jet lag") ||
+    lower.includes("circadian") ||
+    lower.includes("melatonin") ||
+    lower.includes("sleep apnea") ||
+    lower.includes("sleeping") ||
+    lower.includes("bedtime") ||
+    lower.includes("wake time")
+  );
 }
 

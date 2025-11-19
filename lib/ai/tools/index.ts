@@ -86,10 +86,13 @@ export function detectToolFromUserText(text: string): { name: string; args: unkn
     };
   }
 
-  // sleepOptimizer triggers
-  const sleepTriggers = /(sleep|sleep.*optim|sleep.*protocol|circadian|insomnia|sleep.*schedule|sleep.*routine|better.*sleep|improve.*sleep|sleep.*quality|trouble.*sleep|can't.*sleep)/i.test(t);
-  const explicitSleepPlan = /(sleep.*(plan|protocol|schedule|program)|plan.*sleep)/i.test(t);
-  if (sleepTriggers || explicitSleepPlan) {
+  // sleepOptimizer triggers - only trigger when explicitly asking for a plan/protocol
+  // Don't trigger on general sleep questions (those should go to chat with Sleep Coach)
+  const explicitSleepPlan = /(sleep.*(plan|protocol|schedule|program|routine|optimization)|plan.*sleep|create.*sleep|give.*me.*sleep|make.*sleep|build.*sleep|design.*sleep)/i.test(t);
+  const sleepOptimizationRequest = /(optimize.*sleep|improve.*sleep.*schedule|fix.*sleep.*routine|sleep.*optimization)/i.test(t);
+  
+  // Only trigger tool if explicitly requesting a plan/protocol, not just asking questions
+  if (explicitSleepPlan || sleepOptimizationRequest) {
     const sleepIssues: string[] = [];
     if (/(falling.*asleep|can't.*fall.*asleep|trouble.*falling)/i.test(t)) sleepIssues.push("falling_asleep");
     if (/(staying.*asleep|wake.*up|can't.*stay)/i.test(t)) sleepIssues.push("staying_asleep");

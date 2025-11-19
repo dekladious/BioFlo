@@ -38,10 +38,10 @@ export function Header() {
               Pricing
             </Link>
             <Link
-              href="/analytics"
+              href="/admin/analytics"
               className="rounded-xl px-3 py-1.5 text-slate-700 dark:text-slate-200 transition hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white"
             >
-              Analytics
+              Admin
             </Link>
             <Link
               href="/protocols"

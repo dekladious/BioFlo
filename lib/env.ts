@@ -50,6 +50,16 @@ export function getEnv(key: string, defaultValue?: string): string {
 export const env = {
   openai: {
     apiKey: () => getEnv("OPENAI_API_KEY"),
+    cheapModel: () => getEnv("OPENAI_CHEAP_MODEL", "gpt-4o-mini"),
+    expensiveModel: () => getEnv("OPENAI_EXPENSIVE_MODEL", "gpt-5"),
+    embedModel: () => getEnv("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
+  },
+  anthropic: {
+    apiKey: () => getEnv("ANTHROPIC_API_KEY"),
+    judgeModel: () => getEnv("ANTHROPIC_JUDGE_MODEL", "claude-4-5-sonnet"),
+  },
+  analytics: {
+    salt: () => getEnv("BIOFLO_ANALYTICS_SALT", "default-salt-change-in-production"),
   },
   clerk: {
     publishableKey: () => getEnv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"),

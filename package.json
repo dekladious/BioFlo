@@ -8,18 +8,27 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
     "db:setup": "node scripts/setup-database.js",
+    "db:setup-analytics": "node scripts/setup-analytics-tables.js",
     "db:test": "node scripts/test-database.js",
-    "ingest": "node scripts/ingestDocuments.js"
+    "ingest": "node scripts/ingestDocuments.js",
+    "ingest:longevity": "node scripts/ingestLongevityDocs.js",
+    "ingest:sleep": "node scripts/ingest_sleep_matthew_walker.js",
+    "ingest:attia": "node scripts/ingest-attia.js",
+    "test:pipeline": "node scripts/test-v2-pipeline.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
     "@clerk/nextjs": "^6.34.1",
+    "@supabase/ssr": "^0.7.0",
     "@types/pg": "^8.15.6",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.446.0",
     "next": "^16.0.1",
     "openai": "^6.8.0",
+    "pdf-parse": "^1.1.4",
     "pg": "^8.16.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -40,16 +49,5 @@
     "tailwindcss": "3.4.13",
     "typescript": "^5.9.3",
     "vitest": "^2.1.0"
-  },
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "test": "vitest",
-    "test:watch": "vitest --watch",
-    "db:setup": "node scripts/setup-database.js",
-    "db:test": "node scripts/test-database.js",
-    "ingest": "node scripts/ingestDocuments.js"
   }
 }

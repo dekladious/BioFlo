@@ -1,10 +1,40 @@
-node_modules/
-.next/
-dist/
-out/
-/.env*
-!.env.example
-*.log
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# clerk configuration (can include secrets)
-/.clerk/
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+.env
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# Matthew Walker content (user-provided, may contain copyrighted material)
+/knowledge/sleep/matthew-walker/raw/*.txt
+/knowledge/sleep/matthew-walker/raw/*.pdf

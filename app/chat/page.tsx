@@ -67,6 +67,7 @@ export default function ChatPage() {
   const [checkIns, setCheckIns] = useState<CheckIn[]>([]);
   const [todayPlan, setTodayPlan] = useState<TodayPlan | null>(null);
   const [protocol, setProtocol] = useState<Protocol | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   // Quick chips
   const quickChips = [
@@ -77,6 +78,7 @@ export default function ChatPage() {
   ];
 
   useEffect(() => {
+    setMounted(true);
     fetchMessages();
     fetchSidebarData();
   }, []);
@@ -232,7 +234,19 @@ export default function ChatPage() {
           setIsStreaming(false);
           return;
         }
-        throw new Error(`HTTP ${response.status}`);
+        // Try to get error message from response
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          // If JSON parsing fails, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        setError(errorMessage);
+        setIsSending(false);
+        setIsStreaming(false);
+        return;
       }
 
       // Handle streaming response (NDJSON format)
@@ -364,7 +378,12 @@ export default function ChatPage() {
     }
   }
 
-  const isSubscribed = profile?.subscriptionStatus === "active";
+  // For development/testing: bypass subscription check on localhost
+  // Use mounted state to prevent hydration mismatch
+  const bypassPaywall = mounted && 
+    (typeof window !== "undefined" && 
+     (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"));
+  const isSubscribed = profile?.subscriptionStatus === "active" || bypassPaywall;
 
   return (
     <div className="min-h-screen bg-white dark:bg-[#0b1117]">

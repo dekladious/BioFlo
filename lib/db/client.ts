@@ -14,9 +14,15 @@ export function getDbPool(): Pool {
       throw new Error("DATABASE_URL environment variable is not set");
     }
 
+    // Supabase and most cloud providers require SSL
+    const requiresSSL = connectionString.includes("supabase") || 
+                        connectionString.includes("neon") || 
+                        connectionString.includes("railway") ||
+                        process.env.NODE_ENV === "production";
+    
     pool = new Pool({
       connectionString,
-      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+      ssl: requiresSSL ? { rejectUnauthorized: false } : false,
       max: 20, // Maximum number of clients in the pool
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
