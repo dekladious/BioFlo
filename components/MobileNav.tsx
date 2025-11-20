@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, Home, MessageSquare, Calendar, Target, Shield, Settings } from "lucide-react";
+import { Menu, X, Home, MessageSquare, Calendar, Target, Shield, Settings, BarChart3 } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
@@ -11,6 +11,7 @@ const navItems = [
   { href: "/check-ins", label: "Check-ins", icon: Calendar },
   { href: "/protocols", label: "Protocols", icon: Target },
   { href: "/care-mode", label: "Care Mode", icon: Shield },
+  { href: "/admin/analytics", label: "Admin", icon: BarChart3 },
 ];
 
 export function MobileNav() {

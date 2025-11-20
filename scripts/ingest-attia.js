@@ -3,7 +3,7 @@
 /**
  * Peter Attia Content Ingestion Pipeline
  * 
- * Reads .txt files from data/attia/, splits into chunks,
+ * Reads .txt/.pdf/.docx files from data/attia/, splits into chunks,
  * generates embeddings, and inserts into documents table with proper metadata.
  * 
  * Usage:
@@ -21,12 +21,14 @@
  *     longevity_cheatsheet.txt
  */
 
-import { readdir, readFile, mkdir, stat } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import { join, extname, basename, dirname } from "path";
 import { fileURLToPath } from "url";
 import OpenAI from "openai";
 import { Pool } from "pg";
 import { config } from "dotenv";
+import pdfParse from "pdf-parse";
+import mammoth from "mammoth";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -48,6 +50,7 @@ if (!OPENAI_API_KEY) {
 }
 
 const SOURCE_DIR = join(process.cwd(), "data", "attia");
+const SUPPORTED_EXTS = [".txt", ".pdf", ".docx"];
 const CHUNK_SIZE_CHARS = 1600; // Target chunk size in characters (~800-1200 tokens)
 
 const pool = new Pool({ connectionString: DATABASE_URL });
@@ -156,17 +159,37 @@ async function insertChunk({ title, chunk, order, fileName, domain }) {
 /**
  * Read and process a single file
  */
+async function extractTextFromFile(fullPath, extension) {
+  if (extension === ".txt") {
+    return readFile(fullPath, "utf-8");
+  }
+
+  if (extension === ".pdf") {
+    const buffer = await readFile(fullPath);
+    const parsed = await pdfParse(buffer);
+    return parsed.text || "";
+  }
+
+  if (extension === ".docx") {
+    const result = await mammoth.extractRawText({ path: fullPath });
+    return result.value || "";
+  }
+
+  throw new Error(`Unsupported file type: ${extension}`);
+}
+
 async function processFile(fileName) {
   const fullPath = join(SOURCE_DIR, fileName);
   
   try {
     const fileStat = await stat(fullPath);
-    if (!fileStat.isFile() || extname(fileName) !== ".txt") {
-      return { processed: false, reason: "Not a .txt file" };
+    const extension = extname(fileName).toLowerCase();
+    if (!fileStat.isFile() || !SUPPORTED_EXTS.includes(extension)) {
+      return { processed: false, reason: "Unsupported file type" };
     }
 
     console.log(`📄 Processing: ${fileName}`);
-    const content = await readFile(fullPath, "utf-8");
+    const content = (await extractTextFromFile(fullPath, extension)).trim();
     
     if (!content.trim()) {
       console.log(`   ⚠️  File is empty, skipping`);
@@ -180,7 +203,7 @@ async function processFile(fileName) {
     let inserted = 0;
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      const title = `${basename(fileName, ".txt")} - Chunk ${i + 1}`;
+      const title = `${basename(fileName, extension)} - Chunk ${i + 1}`;
       
       await insertChunk({
         title,

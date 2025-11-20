@@ -13,6 +13,7 @@ Enterprise-grade Next.js application with authentication, subscription managemen
 - ✅ **Type Safety** - Full TypeScript support
 - ✅ **Request Tracking** - Request ID tracking for observability
 - ✅ **Knowledge Base Ready** - pgvector-backed `documents` table for RAG context
+- ✅ **Analytics Layer** - Pseudonymous usage logging + admin dashboard
 
 ## Tech Stack
 
@@ -51,17 +52,39 @@ Enterprise-grade Next.js application with authentication, subscription managemen
 
 4. Fill in your API keys in `.env.local`
 
-5. (Optional) Provision the database schema locally:
+5. Provision the main database schema locally:
    ```bash
    pnpm db:setup
    ```
 
-6. Run the development server:
+6. (Optional) Provision analytics tables (AI usage, health checks, errors):
+   ```bash
+   pnpm db:setup-analytics
+   ```
+
+7. Run the development server:
    ```bash
    pnpm dev
    ```
 
-7. Open [http://localhost:3000](http://localhost:3000)
+8. Open [http://localhost:3000](http://localhost:3000)
+
+> Tip: set `BYPASS_ADMIN_CHECK=true` in `.env.local` to preview `/admin/analytics` without Clerk admin credentials during local development.
+
+### Common scripts
+
+| Command | Description |
+| --- | --- |
+| `pnpm dev` | Start Next.js dev server |
+| `pnpm lint` | ESLint (errors treated as failures) |
+| `pnpm test` | Vitest suite (non-watch) |
+| `pnpm db:setup` | Apply core schema |
+| `pnpm db:setup-analytics` | Apply analytics schema |
+| `pnpm db:check-analytics` | Sanity-check analytics tables & latest event |
+| `pnpm ingest` | Generic markdown ingestion (`content/`) |
+| `pnpm ingest:longevity` | Load BioFlo longevity knowledge base |
+| `pnpm ingest:sleep` | Load Matthew Walker sleep corpus |
+| `pnpm ingest:attia` | Load Peter Attia masterclass transcripts |
 
 ## Project Structure
 
@@ -108,19 +131,31 @@ See `.env.example` for required variables.
 
 ## Knowledge Base Ingestion (RAG)
 
-The `documents` table stores protocol snippets and long-form references with embeddings. Use the ingestion script to add new files:
+We store all educational content inside the `documents` table (1536-dim pgvector). Choose the script that matches your source:
 
-```bash
-node scripts/ingest-documents.js ./knowledge/sleep.md --title "Sleep Foundations"
-```
+- **General markdown (`content/`):**
+  ```bash
+  pnpm ingest
+  ```
+- **BioFlo Longevity pack (`content/longevity/`):**
+  ```bash
+  pnpm ingest:longevity
+  ```
+- **Matthew Walker sleep course (`knowledge/sleep/matthew-walker/raw/`):**
+  ```bash
+  pnpm ingest:sleep
+  ```
+- **Peter Attia MasterClass transcripts (`data/attia/` – drop `.txt`, `.pdf`, or `.docx` files there):**
+  ```bash
+  pnpm ingest:attia
+  ```
 
-Flags:
-- `--title` – override the title (defaults to file name)
-- `--user-id` – assign to a specific `users.id` (omit for global/shared)
-- `--user` – look up `users.id` from a Clerk `userId`
-- `--visibility` – `global` (default) or `private`
+All scripts:
+- Read `.md`/`.txt` files (Attia script also ingests `.pdf`/`.docx`), chunk them (~1k tokens), and embed with `text-embedding-3-small`
+- Insert rows with `metadata.topic`, `metadata.source`, `metadata.risk_level`
+- Require `DATABASE_URL` + `OPENAI_API_KEY`
 
-Each chunk is embedded with `text-embedding-3-small` and stored in Postgres via pgvector, ready for retrieval inside `/api/chat`.
+Use `pnpm db:check-analytics` afterwards if you want to confirm new chat runs are being logged with the ingested content.
 
 ## License
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
@@ -11,8 +11,19 @@ import UserSnapshot from "@/components/chat/UserSnapshot";
 import RecentTrends from "@/components/chat/RecentTrends";
 import ProtocolAndPlan from "@/components/chat/ProtocolAndPlan";
 
+const createMessageId = () => {
+  if (
+    typeof globalThis !== "undefined" &&
+    globalThis.crypto &&
+    typeof globalThis.crypto.randomUUID === "function"
+  ) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `msg_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+};
+
 type Message = {
-  id?: string;
+  id: string;
   role: "user" | "assistant" | "system";
   content: string;
   createdAt?: string;
@@ -61,6 +72,8 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [feedbackState, setFeedbackState] = useState<Record<string, "up" | "down">>({});
+  const [feedbackLoading, setFeedbackLoading] = useState<Record<string, boolean>>({});
 
   // Sidebar data
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -77,13 +90,7 @@ export default function ChatPage() {
     "Explain my recent patterns",
   ];
 
-  useEffect(() => {
-    setMounted(true);
-    fetchMessages();
-    fetchSidebarData();
-  }, []);
-
-  async function fetchMessages() {
+  const fetchMessages = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await fetch("/api/chat/history?limit=50");
@@ -95,7 +102,9 @@ export default function ChatPage() {
             content: string;
             created_at: string;
             metadata?: unknown;
+            id?: string;
           }) => ({
+            id: msg.id || createMessageId(),
             role: msg.role as "user" | "assistant",
             content: msg.content,
             createdAt: msg.created_at,
@@ -114,9 +123,9 @@ export default function ChatPage() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, []);
 
-  async function fetchSidebarData() {
+  const fetchSidebarData = useCallback(async () => {
     // Fetch profile
     try {
       const response = await fetch("/api/me");
@@ -185,13 +194,20 @@ export default function ChatPage() {
     } catch (err) {
       console.error("Failed to fetch protocol", err);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    setMounted(true);
+    fetchMessages();
+    fetchSidebarData();
+  }, [fetchMessages, fetchSidebarData]);
 
   async function handleSend(message: string) {
     if (!message.trim() || isSending) return;
 
     // Optimistic UI: add user message immediately
     const userMessage: Message = {
+      id: createMessageId(),
       role: "user",
       content: message,
       createdAt: new Date().toISOString(),
@@ -260,9 +276,11 @@ export default function ChatPage() {
 
         if (reader) {
           // Add placeholder assistant message for streaming
+          const assistantId = createMessageId();
           setMessages((prev) => [
             ...prev,
             {
+              id: assistantId,
               role: "assistant",
               content: "",
               metadata: {},
@@ -354,6 +372,7 @@ export default function ChatPage() {
         const data = await response.json();
         if (data.success && data.data?.reply) {
           const assistantMessage: Message = {
+            id: createMessageId(),
             role: "assistant",
             content: data.data.reply,
             createdAt: new Date().toISOString(),
@@ -371,10 +390,50 @@ export default function ChatPage() {
       console.error("Failed to send message", err);
       setError("The coach had an issue replying. Please try again in a moment.");
       // Remove optimistic user message on error
-      setMessages((prev) => prev.slice(0, -1));
+          setMessages((prev) => prev.slice(0, -1));
     } finally {
       setIsSending(false);
       setIsStreaming(false);
+    }
+  }
+
+  async function handleFeedback(messageId: string, messageContent: string, sentiment: "up" | "down") {
+    if (feedbackState[messageId] || feedbackLoading[messageId]) {
+      return;
+    }
+
+    setFeedbackLoading((prev) => ({ ...prev, [messageId]: true }));
+
+    try {
+      const response = await fetch("/api/chat/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionId,
+          sentiment,
+          message: messageContent,
+        }),
+      });
+
+      if (!response.ok) {
+        let errorMessage = "Failed to record feedback.";
+        try {
+          const data = await response.json();
+          errorMessage = data.error || errorMessage;
+        } catch {
+          // ignore parse error
+        }
+        throw new Error(errorMessage);
+      }
+
+      setFeedbackState((prev) => ({ ...prev, [messageId]: sentiment }));
+    } catch (err) {
+      console.error("Feedback error", err);
+      setError("Couldn't record feedback. Please try again.");
+    } finally {
+      setFeedbackLoading((prev) => ({ ...prev, [messageId]: false }));
     }
   }
 
@@ -441,6 +500,9 @@ export default function ChatPage() {
               isLoading={isLoading}
               isStreaming={isStreaming}
               firstName={profile?.firstName}
+            onFeedback={handleFeedback}
+            feedbackState={feedbackState}
+            feedbackLoading={feedbackLoading}
             />
 
             {/* Input */}
