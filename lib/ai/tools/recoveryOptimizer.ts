@@ -46,7 +46,7 @@ export const recoveryOptimizer = registerTool({
     stressLevel: z.enum(["low", "moderate", "high"]).default("moderate"),
     goals: z.array(z.enum(["muscle_gain", "endurance", "performance", "fatigue_reduction", "injury_prevention"])).default(["performance"]),
   }),
-  async handler({ workoutType, intensity, recoveryTime, sleepQuality, stressLevel, goals }) {
+  async handler({ workoutType, intensity, recoveryTime, sleepQuality, stressLevel, goals }, _context) {
     // Recovery Protocol
     const protocols: RecoveryProtocol[] = [];
 

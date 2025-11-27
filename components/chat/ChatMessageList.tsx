@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type Message = {
-  id?: string;
+  id: string;
   role: "user" | "assistant" | "system";
   content: string;
   createdAt?: string;
@@ -22,6 +22,9 @@ type ChatMessageListProps = {
   isLoading?: boolean;
   isStreaming?: boolean;
   firstName?: string;
+  feedbackState?: Record<string, "up" | "down">;
+  feedbackLoading?: Record<string, boolean>;
+  onFeedback?: (messageId: string, messageContent: string, sentiment: "up" | "down") => void;
 };
 
 export default function ChatMessageList({
@@ -29,6 +32,9 @@ export default function ChatMessageList({
   isLoading = false,
   isStreaming = false,
   firstName,
+  feedbackState,
+  feedbackLoading,
+  onFeedback,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -75,10 +81,10 @@ export default function ChatMessageList({
           </div>
           <div className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed space-y-2">
             <p>
-              I'm your BioFlo coach. You can talk to me about your sleep, anxiety, energy, routines, or biohacking ideas.
+              I’m your BioFlo coach. You can talk to me about your sleep, anxiety, energy, routines, or biohacking ideas.
             </p>
             <p>
-              I'll mix what you've told me with your data and science-backed protocols – and we'll keep it safe and realistic.
+              I’ll mix what you’ve told me with your data and science-backed protocols – and we’ll keep it safe and realistic.
             </p>
           </div>
         </div>
@@ -98,6 +104,7 @@ export default function ChatMessageList({
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
       {messages.map((message, idx) => {
+        const messageId = message.id || String(idx);
         const isCrisis =
           message.metadata?.isCrisis ||
           message.metadata?.category === "MENTAL_HEALTH_CRISIS" ||
@@ -120,7 +127,7 @@ export default function ChatMessageList({
 
         if (message.role === "user") {
           return (
-            <div key={idx} className="flex justify-end">
+            <div key={messageId} className="flex justify-end">
               <div className="max-w-[80%] space-y-1">
                 <div className="rounded-2xl rounded-tr-sm bg-sky-400/20 dark:bg-sky-400/20 border border-sky-400/30 px-4 py-3">
                   <div className="text-sm text-slate-900 dark:text-white whitespace-pre-wrap break-words">
@@ -142,8 +149,14 @@ export default function ChatMessageList({
         }
 
         // Assistant message
+        const feedbackValue = feedbackState?.[messageId];
+        const feedbackSubmitting = feedbackLoading?.[messageId];
+        const showFeedbackActions =
+          typeof onFeedback === "function" &&
+          (!isStreaming || idx !== messages.length - 1);
+
         return (
-          <div key={idx} className="flex justify-start">
+          <div key={messageId} className="flex justify-start">
             <div className="max-w-[80%] space-y-1">
               {isCrisis && (
                 <div className="flex items-center gap-2 mb-1">
@@ -192,6 +205,41 @@ export default function ChatMessageList({
                   </>
                 )}
               </div>
+              {showFeedbackActions && (
+                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-500">
+                  <button
+                    type="button"
+                    disabled={Boolean(feedbackValue) || feedbackSubmitting}
+                    onClick={() => onFeedback?.(messageId, message.content, "up")}
+                    className={`flex items-center gap-1 rounded-full border px-2 py-1 transition ${
+                      feedbackValue === "up"
+                        ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-300"
+                        : "border-slate-200 dark:border-white/10 hover:border-emerald-400/60 hover:text-emerald-300"
+                    }`}
+                  >
+                    <ThumbsUp className="size-3.5" />
+                    <span>Helpful</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(feedbackValue) || feedbackSubmitting}
+                    onClick={() => onFeedback?.(messageId, message.content, "down")}
+                    className={`flex items-center gap-1 rounded-full border px-2 py-1 transition ${
+                      feedbackValue === "down"
+                        ? "border-amber-400/60 bg-amber-400/15 text-amber-300"
+                        : "border-slate-200 dark:border-white/10 hover:border-amber-400/60 hover:text-amber-300"
+                    }`}
+                  >
+                    <ThumbsDown className="size-3.5" />
+                    <span>Needs work</span>
+                  </button>
+                  {feedbackValue && (
+                    <span className="text-slate-400 dark:text-slate-500">
+                      {feedbackValue === "up" ? "Thanks for the signal!" : "We'll use this to improve."}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         );

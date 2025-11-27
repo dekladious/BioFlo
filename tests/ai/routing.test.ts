@@ -31,7 +31,12 @@ vi.mock("@/lib/ai/safety", async () => {
 
 // Mock the model router to avoid actual API calls
 vi.mock("@/lib/ai/modelRouter", () => ({
-  streamModel: vi.fn().mockResolvedValue(undefined),
+  streamModel: vi.fn().mockImplementation(async ({ onToken }) => {
+    if (onToken) {
+      await onToken("Mock response.");
+    }
+    return undefined;
+  }),
   runModel: vi.fn().mockResolvedValue('{"category": "GENERAL_WELLNESS", "reason": "Test"}'),
 }));
 

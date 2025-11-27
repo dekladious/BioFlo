@@ -27,14 +27,16 @@ export async function GET(req: Request) {
       subscription_status: string;
       goals: unknown;
       main_struggles: unknown;
+      onboarding_completed: boolean | null;
+      today_mode: string | null;
     }>(
-      `SELECT id, email, full_name, subscription_tier, subscription_status, goals, main_struggles
+      `SELECT id, email, full_name, subscription_tier, subscription_status, goals, main_struggles, onboarding_completed, today_mode
        FROM users
        WHERE clerk_user_id = $1`,
       [userId]
     );
 
-    // If user doesn't exist in DB, return basic Clerk data
+    // If user doesn't exist in DB, return basic Clerk data (new user, needs onboarding)
     if (!user) {
       return Response.json({
         success: true,
@@ -48,6 +50,9 @@ export async function GET(req: Request) {
           subscriptionStatus: "none",
           goals: {},
           mainStruggles: [],
+          onboardingCompleted: false,
+          needsOnboarding: true,
+          todayMode: "NORMAL",
         },
         requestId,
         timestamp: new Date().toISOString(),
@@ -55,6 +60,10 @@ export async function GET(req: Request) {
     }
 
     logger.info("User profile fetched", { userId, requestId });
+
+    // Check if user has completed onboarding (either explicit flag or has goals set)
+    const hasCompletedOnboarding = user.onboarding_completed === true || 
+      (user.goals !== null && Object.keys(user.goals as object || {}).length > 0);
 
     return Response.json({
       success: true,
@@ -69,6 +78,9 @@ export async function GET(req: Request) {
         subscriptionStatus: user.subscription_status || "none",
         goals: user.goals || {},
         mainStruggles: user.main_struggles || [],
+        onboardingCompleted: hasCompletedOnboarding,
+        needsOnboarding: !hasCompletedOnboarding,
+        todayMode: user.today_mode || "NORMAL",
       },
       requestId,
       timestamp: new Date().toISOString(),

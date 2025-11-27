@@ -10,21 +10,20 @@
  * - Analytics logging
  */
 
-import { auth, currentUser } from "@clerk/nextjs/server";
 import { randomUUID } from "crypto";
-import { classifyRequest } from "@/lib/ai/classifier";
-import { chooseModels } from "@/lib/ai/modelRouter";
-import { buildRagContext, canAnswerFromContext } from "@/lib/ai/rag";
-import { buildSystemPrompt } from "@/lib/ai/systemPrompt";
 import { judgeAnswer, rewriteUnsafeAnswer } from "@/lib/ai/safety";
 import { generateWithFallback } from "@/lib/ai/fallback";
 import { buildTriageForBlocked, buildGenericSafeAnswer } from "@/lib/ai/triage";
 import { getAiUserId } from "@/lib/analytics/userId";
 import { logAnalyticsEvent, logApiError } from "@/lib/analytics/logging";
 import { logger } from "@/lib/logger";
-import { queryOne } from "@/lib/db/client";
-import { getRequestMetadata, createErrorResponse } from "@/lib/api-utils";
-import { ClerkPublicMetadata } from "@/types";
+import { persistChatHistory } from "@/lib/ai/chat/history";
+import { createErrorResponse } from "@/lib/api-utils";
+import { ChatValidationError, validateAndNormalizeMessages } from "@/lib/api/chat/validation";
+import { enforceChatGuards } from "@/lib/api/chat/guard";
+import { classifyAndHandleTriage } from "@/lib/api/chat/classification";
+import { prepareChatPipeline } from "@/lib/api/chat/pipeline";
+import { canAnswerFromContext } from "@/lib/ai/rag";
 
 export const runtime = "nodejs";
 
@@ -35,87 +34,50 @@ type ChatRequestBody = {
 };
 
 export async function POST(req: Request) {
-  const { ip, requestId } = getRequestMetadata(req);
   const startTime = Date.now();
+  let requestId = "";
+  let ip = "";
+  let userId = "";
 
   try {
-    // Authentication
-    const { userId } = await auth();
-    if (!userId) {
-      logger.warn("Chat V2 API: Unauthorized", { requestId, ip });
-      return createErrorResponse("Unauthorized", requestId, 401);
+    const guard = await enforceChatGuards(req);
+    if (!guard.ok) {
+      return guard.response;
     }
-
-    // Get user for subscription check
-    const user = await currentUser();
-    const isPro = Boolean((user?.publicMetadata as ClerkPublicMetadata)?.isPro);
-    const bypassPaywall = process.env.BYPASS_PAYWALL === "true";
-    if (!isPro && !bypassPaywall) {
-      logger.info("Chat V2 API: Subscription required", { userId, requestId });
-      return createErrorResponse("Subscription required", requestId, 402);
-    }
+    userId = guard.userId;
+    ip = guard.ip;
+    requestId = guard.requestId;
 
     // Parse request body
     const body: ChatRequestBody = await req.json();
     const { messages, sessionId: incomingSessionId, metadata } = body;
     const sessionId = incomingSessionId || randomUUID();
 
-    // Validate messages
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return createErrorResponse("Invalid messages format", requestId, 400);
-    }
+    let conversationMessages;
+    let latestUserMessage: string;
 
-    // Get latest user message
-    const latestUserMessage = messages
-      .filter((m) => m.role === "user")
-      .slice(-1)[0]?.content || "";
-
-    if (!latestUserMessage.trim()) {
-      return createErrorResponse("No user message found", requestId, 400);
-    }
-
-    // Get user's database ID for RAG filtering
-    let userDbId: string | null = null;
     try {
-      const userRecord = await queryOne<{ id: string }>(
-        "SELECT id FROM users WHERE clerk_user_id = $1",
-        [userId]
-      );
-      userDbId = userRecord?.id || null;
-    } catch (dbError) {
-      logger.debug("Chat V2 API: Could not fetch user DB ID", { error: dbError, userId, requestId });
+      const validation = validateAndNormalizeMessages(messages);
+      conversationMessages = validation.normalizedMessages;
+      latestUserMessage = validation.latestUserMessage;
+    } catch (error) {
+      if (error instanceof ChatValidationError) {
+        logger.warn(`Chat V2 API: ${error.message}`, { requestId, userId });
+        return createErrorResponse(error.message, requestId, 400);
+      }
+      throw error;
     }
 
-    // Generate pseudonymous AI user ID for analytics
-    const aiUserId = getAiUserId(userId, ip);
-
-    // Step 1: Classify request
-    const classification = await classifyRequest(latestUserMessage);
-    logger.debug("Chat V2 API: Request classified", {
+    const classificationOutcome = await classifyAndHandleTriage({
+      latestUserMessage,
       userId,
-      classification,
-      requestId,
+      ip,
+      sessionId,
     });
+    aiUserId = classificationOutcome.aiUserId;
+    const { classification, triageMessage } = classificationOutcome;
 
-    // Step 2: Pre-answer safety gate
-    if (!classification.allow_answer) {
-      const triageMessage = buildTriageForBlocked(
-        classification.topic,
-        classification.risk
-      );
-
-      // Log triage event
-      await logAnalyticsEvent({
-        aiUserId,
-        eventType: "chat_triage",
-        sessionId,
-        topic: classification.topic,
-        risk: classification.risk,
-        complexity: classification.complexity,
-        success: false,
-        metadata: { reason: "allow_answer=false" },
-      });
-
+    if (triageMessage) {
       return Response.json(
         {
           reply: triageMessage,
@@ -129,54 +91,37 @@ export async function POST(req: Request) {
       );
     }
 
-    // Step 3: Build RAG context if needed
-    let ragContext = "";
-    let ragSources: { id: number; title: string | null; similarity: number }[] = [];
+    const pipeline = await prepareChatPipeline({
+      userId,
+      userMessage: latestUserMessage,
+      classification,
+      conversationMessages,
+      domain: metadata?.domain,
+    });
+    const {
+      ragContext,
+      ragSources,
+      userDbId,
+      modelChoice,
+      enhancedMessages,
+      systemPrompt,
+    } = pipeline;
+
     let canAnswerFromRag: boolean | null = null;
-
-    if (classification.needs_rag) {
+    if (classification.risk !== "low" && ragContext) {
       try {
-        const ragResult = await buildRagContext(
+        canAnswerFromRag = await canAnswerFromContext(
           latestUserMessage,
-          userDbId,
-          6
+          ragContext
         );
-        ragContext = ragResult.context;
-        ragSources = ragResult.sources;
-
-        // Optional: Check if we can answer from context (for medium/high risk)
-        if (classification.risk !== "low" && ragContext) {
-          canAnswerFromRag = await canAnswerFromContext(
-            latestUserMessage,
-            ragContext
-          );
-        }
-      } catch (ragError) {
-        logger.warn("Chat V2 API: RAG retrieval failed", {
-          error: ragError,
+      } catch (ragCheckError) {
+        logger.debug("Chat V2 API: Context-only answer check failed", {
+          error: ragCheckError,
           userId,
           requestId,
         });
-        // Continue without RAG context
       }
     }
-
-    // Step 4: Choose models
-    const modelChoice = chooseModels(classification);
-
-    // Step 5: Build system prompt
-    const systemPrompt = buildSystemPrompt(ragContext);
-
-    // Step 6: Compose messages for LLM
-    const llmMessages = [
-      { role: "system" as const, content: systemPrompt },
-      ...messages
-        .filter((m) => m.role !== "system")
-        .map((m) => ({
-          role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
-          content: m.content,
-        })),
-    ];
 
     // Step 7: Generate answer with fallback
     let assistantDraft: string;
@@ -184,7 +129,7 @@ export async function POST(req: Request) {
       assistantDraft = await generateWithFallback({
         userQuestion: latestUserMessage,
         systemPrompt,
-        messages: llmMessages,
+        messages: enhancedMessages,
         mainModel: modelChoice.mainModel,
         judgeModel: modelChoice.judgeModel,
       });
@@ -281,7 +226,15 @@ export async function POST(req: Request) {
       }
     }
 
-    // Step 9: Log analytics event
+    // Step 9: Persist chat history + log analytics
+    await persistChatHistory({
+      userId,
+      sessionId,
+      requestMessages: conversationMessages,
+      assistantContent: finalAnswer,
+      provider: modelChoice.mainModel,
+    });
+
     await logAnalyticsEvent({
       aiUserId,
       eventType: "chat_response",
@@ -294,7 +247,7 @@ export async function POST(req: Request) {
       modelUsed: modelChoice.mainModel,
       usedJudge: modelChoice.useJudge,
       judgeVerdict,
-      messagesInSession: messages.length,
+      messagesInSession: conversationMessages.length,
       answerLength: finalAnswer.length,
       ragDocsCount: ragSources.length,
       ragSources: ragSources.length > 0 ? ragSources : undefined,

@@ -12,20 +12,20 @@ interface ReminderSettings {
  * Requests notification permission and schedules daily reminders
  */
 export function useCheckInReminder() {
+  const isBrowser = typeof window !== "undefined";
   const [settings, setSettings] = useState<ReminderSettings | null>(null);
-  const [permission, setPermission] = useState<NotificationPermission>("default");
+  const [permission, setPermission] = useState<NotificationPermission>(() =>
+    isBrowser ? Notification.permission : "default"
+  );
   const [loading, setLoading] = useState(true);
 
-  // Request notification permission on mount
+  // Request notification permission on mount (client only)
   useEffect(() => {
-    if ("Notification" in window) {
-      setPermission(Notification.permission);
-      
-      if (Notification.permission === "default") {
-        Notification.requestPermission().then((perm) => {
-          setPermission(perm);
-        });
-      }
+    if (typeof window === "undefined") return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().then((perm) => {
+        setPermission(perm);
+      });
     }
   }, []);
 
@@ -44,7 +44,7 @@ export function useCheckInReminder() {
 
   // Schedule daily reminder
   useEffect(() => {
-    if (!settings?.enabled || permission !== "granted" || !settings.time) {
+    if (typeof window === "undefined" || !settings?.enabled || permission !== "granted" || !settings.time) {
       return;
     }
 
@@ -112,15 +112,14 @@ export function useCheckInReminder() {
     }
   };
 
-  return {
+    return {
     settings,
     permission,
     loading,
     updateSettings,
     requestPermission: () => {
-      if ("Notification" in window) {
-        Notification.requestPermission().then(setPermission);
-      }
+      if (!isBrowser) return;
+      Notification.requestPermission().then(setPermission);
     },
   };
 }

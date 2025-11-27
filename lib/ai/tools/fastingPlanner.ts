@@ -49,7 +49,7 @@ export const fastingPlanner = registerTool({
     activityLevel: z.enum(["sedentary", "moderate", "high", "athlete"]).default("moderate"),
     currentProtocol: z.string().optional(), // e.g., "none", "12:12", "16:8"
   }),
-  async handler({ experienceLevel, goals, scheduleConstraints, activityLevel, currentProtocol }) {
+  async handler({ experienceLevel, goals, scheduleConstraints, activityLevel, currentProtocol }, _context) {
     // Determine protocol based on experience level and goals
     let protocol: FastingProtocol;
     

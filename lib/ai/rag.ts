@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { query, queryOne } from "@/lib/db/client";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
+import type { RequestClassification } from "@/lib/ai/classifier";
 
 type DocumentRow = {
   id: string;
@@ -192,7 +193,7 @@ export async function canAnswerFromContext(
         },
       ],
       temperature: 0.1,
-      max_tokens: 50,
+      max_completion_tokens: 50,
       response_format: { type: "json_object" },
     });
 
@@ -254,6 +255,89 @@ export async function retrieveRelevantContext({
   });
 
   return formatDocumentsForContext(matches);
+}
+
+export type RagBundle = {
+  combinedContext: string;
+  sources: RagSource[];
+  sleepContext?: string;
+  longevityContext?: string;
+  generalContext?: string;
+};
+
+export async function buildRagBundle({
+  userMessage,
+  userId,
+  classification,
+  sleepMode,
+  maxDocs = 6,
+}: {
+  userMessage: string;
+  userId: string | null;
+  classification: RequestClassification;
+  sleepMode: boolean;
+  maxDocs?: number;
+}): Promise<RagBundle> {
+  const sources: RagSource[] = [];
+  let sleepContext = "";
+  let longevityContext = "";
+  let generalContext = "";
+
+  if (sleepMode) {
+    try {
+      const sleepDocs = await getSleepContext(userMessage, maxDocs);
+      if (sleepDocs.length > 0) {
+        sleepContext = formatSleepContext(sleepDocs);
+        sources.push(
+          ...sleepDocs.map((doc) => ({
+            id: typeof doc.id === "number" ? doc.id : parseInt(String(doc.id || 0), 10),
+            title: doc.title || null,
+            similarity: doc.similarity,
+            metadata: doc.metadata ?? null,
+          }))
+        );
+      }
+    } catch (error) {
+      logger.warn("RAG: Sleep context retrieval failed", { error });
+    }
+  }
+
+  if (!sleepMode && classification.needs_rag) {
+    try {
+      const longevityDocs = await getRelevantLongevityDocs(userMessage, { limit: maxDocs });
+      if (longevityDocs.length > 0) {
+        longevityContext = formatLongevityKnowledgeSnippets(longevityDocs);
+        sources.push(
+          ...longevityDocs.map((doc) => ({
+            id: typeof doc.id === "number" ? doc.id : parseInt(String(doc.id || 0), 10),
+            title: doc.title || null,
+            similarity: doc.similarity,
+            metadata: doc.metadata ?? null,
+          }))
+        );
+      }
+    } catch (error) {
+      logger.warn("RAG: Longevity context retrieval failed", { error });
+    }
+  }
+
+  if (classification.needs_rag && !sleepContext && !longevityContext) {
+    try {
+      const ragResult = await buildRagContext(userMessage, userId, maxDocs);
+      generalContext = ragResult.context;
+      sources.push(...ragResult.sources);
+    } catch (error) {
+      logger.warn("RAG: General context retrieval failed", { error });
+    }
+  }
+
+  return {
+    combinedContext: sleepContext || longevityContext || generalContext || "",
+    sources,
+    sleepContext: sleepContext || undefined,
+    longevityContext: longevityContext || undefined,
+    generalContext: generalContext || undefined,
+  };
 }
 
 /**

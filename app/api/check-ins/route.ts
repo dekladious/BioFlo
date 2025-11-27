@@ -5,6 +5,34 @@ import { getRequestMetadata, createErrorResponse } from "@/lib/api-utils";
 
 export const runtime = "nodejs";
 
+let checkInsSchemaEnsured = false;
+
+async function ensureCheckInsSchema() {
+  if (checkInsSchemaEnsured) return;
+
+  try {
+    const column = await queryOne<{ column_name: string }>(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_name = 'check_ins' AND column_name = 'sleep_quality'`
+    );
+
+    if (!column) {
+      await query(`
+        ALTER TABLE check_ins
+        ADD COLUMN sleep_quality INTEGER CHECK (sleep_quality >= 1 AND sleep_quality <= 10)
+      `);
+
+      logger.info("check_ins table patched with sleep_quality column");
+    }
+
+    checkInsSchemaEnsured = true;
+  } catch (error) {
+    logger.error("Failed to ensure check_ins schema", error);
+    // Don't throw here to avoid blocking requests; downstream queries will surface the DB error if it persists.
+  }
+}
+
 // POST: Create a new check-in
 export async function POST(req: Request) {
   const { requestId } = getRequestMetadata(req);
@@ -38,6 +66,8 @@ export async function POST(req: Request) {
     if (!user) {
       return createErrorResponse("User not found", requestId, 404);
     }
+
+    await ensureCheckInsSchema();
 
     // Insert check-in
     const result = await query<{ id: number }>(
@@ -116,6 +146,8 @@ export async function GET(req: Request) {
     if (!user) {
       return createErrorResponse("User not found", requestId, 404);
     }
+
+    await ensureCheckInsSchema();
 
     // Fetch check-ins
     const checkIns = await query<{

@@ -104,7 +104,7 @@ export const mealPlanner = registerTool({
     dietaryPrefs: z.array(z.string()).default([]),
     exclusions: z.array(z.string()).default([]),
   }),
-  async handler({ calories, dietaryPrefs, exclusions }) {
+  async handler({ calories, dietaryPrefs, exclusions }, _context) {
     // Adaptive macro split based on calories
     // Higher calories = more carbs, lower calories = more protein
     let proteinPct = 0.30;

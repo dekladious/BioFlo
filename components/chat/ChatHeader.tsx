@@ -42,7 +42,7 @@ export default function ChatHeader({ subscriptionStatus = "inactive", mode = "NO
 
       {/* Safety Notice */}
       <div className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-        ⚠️ BioFlo is not a doctor and can't help in emergencies. If you're in crisis or have severe symptoms, contact emergency services or a doctor.
+        ⚠️ BioFlo is not a doctor and can’t help in emergencies. If you’re in crisis or have severe symptoms, contact emergency services or a doctor.
       </div>
     </div>
   );

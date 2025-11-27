@@ -69,3 +69,6 @@ Aborted requests emit a deterministic `ERROR_USER_ABORTED_REQUEST`. Any other er
 
 Maintaining these helpers ensures the AI layer remains consistent, debuggable, and ready for additional surfaces (mobile, cron jobs, admin simulators). Update this document whenever you add new shared helpers or change their failure semantics.
 
+
+
+

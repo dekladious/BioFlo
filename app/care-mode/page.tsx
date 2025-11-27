@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Loader2, Plus, X, AlertCircle, Shield, Mail, Phone } from "lucide-react";
-import { SafetyDisclaimer } from "@/components/SafetyDisclaimer";
 
-const pane =
-  "rounded-[16px] border border-white/10 bg-white/[0.045] backdrop-blur shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_30px_rgba(0,0,0,0.25)]";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils/cn";
 
 type Contact = {
   name: string;
@@ -181,183 +180,185 @@ export default function CareModePage() {
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Care Mode</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Enable monitoring for yourself or a loved one. BioFlo will watch for unusual patterns and alert contacts if needed.
-        </p>
-      </div>
+  const heroStats = [
+    { label: "Status", value: enabled ? "Active" : "Off", helper: enabled ? "Monitoring deviations" : "Disabled" },
+    { label: "Contacts", value: `${contacts.length}/2`, helper: "Trusted circle" },
+    { label: "Pending prompts", value: pendingCheckIns.length, helper: "Awaiting acknowledgement" },
+  ];
+  const heroActions = [
+    { label: "Manage contacts", helper: "Add or remove guardians", href: "#settings" },
+    { label: "Review prompts", helper: "Respond to pending check-ins", href: "#pending" },
+  ];
 
-      {/* Important Disclaimer */}
-      <div className={pane + " p-6 border-amber-400/30 bg-amber-400/5"}>
+  return (
+    <div className="space-y-10">
+      <Card variant="hero" statusAccent="primary" className="space-y-6">
+        <div>
+          <p className="text-xs uppercase tracking-[0.4em] text-text-soft">Care mode</p>
+          <h1 className="text-3xl font-semibold text-text-main">Keep your circle informed with smart escalation.</h1>
+          <p className="max-w-3xl text-base text-text-soft">
+            BioFlo watches for unusual deviations, nudges you for confirmation, and escalates to trusted contacts if you don’t reply. It’s bio-safety infrastructure—not an emergency service.
+          </p>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          {heroStats.map((stat) => (
+            <Card key={stat.label} variant="compact" className="border border-border-subtle bg-white/5">
+              <p className="text-[11px] uppercase tracking-wide text-text-soft">{stat.label}</p>
+              <p className="mt-1 text-2xl font-semibold text-text-main">{stat.value}</p>
+              <p className="text-[11px] text-text-soft">{stat.helper}</p>
+            </Card>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {heroActions.map((action) => (
+            <a key={action.label} href={action.href} className="quick-action-chip border-border-subtle bg-white/5">
+              <div>
+                <p className="text-xs font-semibold text-text-main">{action.label}</p>
+                <p className="text-[10px] text-text-soft">{action.helper}</p>
+              </div>
+            </a>
+          ))}
+        </div>
+      </Card>
+
+      <Card statusAccent="warning" className="space-y-2">
         <div className="flex items-start gap-3">
-          <AlertCircle className="size-5 text-amber-400 mt-0.5 flex-shrink-0" />
-          <div className="text-sm text-slate-300">
-            <p className="font-medium text-white mb-1">Important Disclaimer</p>
-            <p>
-              Care Mode is not an emergency service or medical monitoring. It does not detect medical emergencies like heart attacks.
-              Do not rely on BioFlo for emergencies. Always call emergency services (911/999/112) for medical emergencies.
+          <AlertCircle className="size-5 text-warning" />
+          <div className="text-sm text-text-main">
+            <p className="font-semibold">Important disclaimer</p>
+            <p className="text-text-soft">
+              Care Mode is not an emergency service or medical monitor. It cannot detect medical emergencies. Always call emergency services for urgent medical events.
             </p>
           </div>
         </div>
-      </div>
+      </Card>
 
-      {/* Settings */}
-      <div className={pane + " p-6 space-y-6"}>
+      <Card className="space-y-6" id="settings" title="Enable Care Mode" subtitle="Monitor deviations and alert contacts when needed.">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Enable Care Mode</h2>
-            <p className="text-sm text-slate-400 mt-1">
-              When enabled, BioFlo will monitor your patterns and alert contacts if unusual deviations are detected.
-            </p>
-          </div>
+          <p className="text-sm text-text-soft">
+            When enabled, BioFlo will monitor your patterns and alert contacts if unusual deviations are detected.
+          </p>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-400"></div>
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="sr-only peer" />
+            <span className="h-6 w-11 rounded-full bg-white/10 peer-checked:bg-teal after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all peer-checked:after:translate-x-full" />
           </label>
         </div>
 
         {enabled && (
           <>
-            {/* Contacts */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-slate-300">Emergency Contacts (max 2)</h3>
+                <h3 className="text-sm font-medium text-text-main">Emergency contacts (max 2)</h3>
                 {contacts.length < 2 && (
                   <button
                     onClick={() => setShowAddContact(true)}
-                    className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm font-medium text-slate-300 hover:bg-white/[0.06] transition"
+                    className="flex items-center gap-2 rounded-full border border-border-subtle px-3 py-1.5 text-sm font-medium text-text-main hover:bg-white/5 transition"
                   >
-                    <Plus className="size-4" /> Add Contact
+                    <Plus className="size-4" /> Add contact
                   </button>
                 )}
               </div>
 
               {contacts.length === 0 ? (
-                <p className="text-sm text-slate-400">No contacts added. Add at least one contact to enable alerts.</p>
+                <p className="text-sm text-text-soft">No contacts added. Add at least one contact to enable alerts.</p>
               ) : (
                 <div className="space-y-2">
                   {contacts.map((contact, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] p-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Shield className="size-4 text-sky-400" />
-                        <div>
-                          <div className="text-sm font-medium text-white">{contact.name}</div>
-                          <div className="text-xs text-slate-400 flex items-center gap-3 mt-1">
-                            {contact.email && (
-                              <span className="flex items-center gap-1">
-                                <Mail className="size-3" /> {contact.email}
-                              </span>
-                            )}
-                            {contact.phone && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="size-3" /> {contact.phone}
-                              </span>
-                            )}
-                          </div>
+                    <Card key={contact.name + index} className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium text-text-main">{contact.name}</div>
+                        <div className="mt-1 flex items-center gap-3 text-xs text-text-soft">
+                          {contact.email && (
+                            <span className="flex items-center gap-1">
+                              <Mail className="size-3" /> {contact.email}
+                            </span>
+                          )}
+                          {contact.phone && (
+                            <span className="flex items-center gap-1">
+                              <Phone className="size-3" /> {contact.phone}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <button
                         onClick={() => removeContact(index)}
-                        className="rounded-lg p-1 text-slate-400 hover:text-white hover:bg-white/10 transition"
+                        className="rounded-full border border-border-subtle p-1 text-text-soft hover:border-text-main hover:text-text-main"
                       >
                         <X className="size-4" />
                       </button>
-                    </div>
+                    </Card>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Check-in Timeout */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">
-                Check-in Timeout (hours)
-              </label>
-              <p className="text-xs text-slate-400">
-                How long to wait for a response before alerting contacts
-              </p>
+              <label className="text-sm font-medium text-text-main">Check-in timeout (hours)</label>
+              <p className="text-xs text-text-soft">How long to wait for a response before alerting contacts</p>
               <input
                 type="number"
                 min="1"
                 max="24"
                 value={checkInTimeoutHours}
                 onChange={(e) => setCheckInTimeoutHours(parseInt(e.target.value) || 2)}
-                className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-400/50"
+                className="w-full rounded-2xl border border-border-subtle bg-white/5 px-3 py-2 text-sm text-text-main focus:outline-none focus:border-teal"
               />
             </div>
 
-            {/* Save Button */}
             <button
               onClick={saveSettings}
               disabled={saving || contacts.length === 0}
-              className="w-full rounded-xl bg-gradient-to-r from-sky-400 to-emerald-400 px-5 py-3 font-medium text-black shadow-[0_12px_30px_rgba(56,189,248,0.35)] transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full rounded-full border border-teal bg-teal-soft px-5 py-3 font-semibold text-teal transition hover:bg-teal/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? (
                 <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="size-4 animate-spin" /> Saving...
+                  <Loader2 className="size-4 animate-spin" /> Saving…
                 </span>
               ) : (
-                "Save Settings"
+                "Save settings"
               )}
             </button>
           </>
         )}
-      </div>
+      </Card>
 
-      {/* Pending Check-ins */}
       {enabled && pendingCheckIns.length > 0 && (
-        <div className={pane + " p-6 space-y-4"}>
-          <h2 className="text-lg font-semibold">Pending Check-ins</h2>
+        <Card id="pending" title="Pending check-ins" subtitle="Respond to confirm you’re okay" className="space-y-4">
           {pendingCheckIns.map((checkIn) => (
-            <div
-              key={checkIn.id}
-              className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4"
-            >
+            <Card key={checkIn.id} variant="compact" statusAccent="warning">
               <div className="flex items-start gap-3">
-                <AlertCircle className="size-5 text-amber-400 mt-0.5 flex-shrink-0" />
+                <AlertCircle className="size-5 text-warning mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
-                  <p className="text-sm text-white mb-2">{checkIn.alert.message}</p>
-                  <p className="text-xs text-slate-400 mb-3">
+                  <p className="mb-2 text-sm text-text-main">{checkIn.alert.message}</p>
+                  <p className="mb-3 text-xs text-text-soft">
                     Sent {new Date(checkIn.promptSentAt).toLocaleString("en-GB")}
                   </p>
                   <div className="flex gap-2">
                     <button
                       onClick={() => respondToCheckIn(checkIn.id, true)}
-                      className="rounded-lg border border-emerald-400/50 bg-emerald-400/10 px-3 py-1.5 text-sm font-medium text-emerald-300 hover:bg-emerald-400/20 transition"
+                      className="rounded-full border border-success px-3 py-1.5 text-sm font-medium text-success hover:bg-success/10 transition"
                     >
-                      I'm Okay
+                      I’m okay
                     </button>
                     <button
                       onClick={() => respondToCheckIn(checkIn.id, false)}
-                      className="rounded-lg border border-red-400/50 bg-red-400/10 px-3 py-1.5 text-sm font-medium text-red-300 hover:bg-red-400/20 transition"
+                      className="rounded-full border border-danger px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10 transition"
                     >
-                      Need Help
+                      Need help
                     </button>
                   </div>
                 </div>
               </div>
-            </div>
+            </Card>
           ))}
-        </div>
+        </Card>
       )}
 
       {/* Add Contact Modal */}
       {showAddContact && (
-        <AddContactModal
-          onSave={addContact}
-          onCancel={() => setShowAddContact(false)}
-        />
+        <AddContactModal onSave={addContact} onCancel={() => setShowAddContact(false)} />
       )}
     </div>
   );
@@ -395,38 +396,38 @@ function AddContactModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className={pane + " w-full max-w-md p-6 space-y-4"}>
-        <h3 className="text-lg font-semibold">Add Emergency Contact</h3>
+      <Card className="w-full max-w-md space-y-4">
+        <h3 className="text-lg font-semibold text-text-main">Add Emergency Contact</h3>
 
         <div className="space-y-3">
           <div>
-            <label className="text-sm font-medium text-slate-300">Name *</label>
+            <label className="text-sm font-medium text-text-main">Name *</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-400/50"
+              className="w-full rounded-2xl border border-border-subtle bg-white/5 px-3 py-2 text-sm text-text-main focus:outline-none focus:border-teal"
               placeholder="John Doe"
             />
           </div>
 
           <div>
-            <label className="text-sm font-medium text-slate-300">Email</label>
+            <label className="text-sm font-medium text-text-main">Email</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-400/50"
+              className="w-full rounded-2xl border border-border-subtle bg-white/5 px-3 py-2 text-sm text-text-main focus:outline-none focus:border-teal"
               placeholder="john@example.com"
             />
           </div>
 
           <div>
-            <label className="text-sm font-medium text-slate-300">Phone</label>
+            <label className="text-sm font-medium text-text-main">Phone</label>
             <input
               type="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-400/50"
+              className="w-full rounded-2xl border border-border-subtle bg-white/5 px-3 py-2 text-sm text-text-main focus:outline-none focus:border-teal"
               placeholder="+44 7700 900000"
             />
           </div>
@@ -436,18 +437,18 @@ function AddContactModal({
           <button
             onClick={handleSave}
             disabled={!name.trim() || (!email.trim() && !phone.trim())}
-            className="flex-1 rounded-xl bg-gradient-to-r from-sky-400 to-emerald-400 px-4 py-2 text-sm font-medium text-black transition hover:brightness-110 disabled:opacity-50"
+            className="flex-1 rounded-full border border-teal bg-teal-soft px-4 py-2 text-sm font-semibold text-teal transition hover:bg-teal/20 disabled:opacity-50"
           >
-            Add Contact
+            Add contact
           </button>
           <button
             onClick={onCancel}
-            className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-medium text-slate-300 hover:bg-white/[0.06] transition"
+            className="rounded-full border border-border-subtle bg-white/5 px-4 py-2 text-sm font-medium text-text-soft hover:border-text-main hover:text-text-main"
           >
             Cancel
           </button>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

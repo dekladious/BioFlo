@@ -15,7 +15,7 @@ type ProtocolAndPlanProps = {
 export default function ProtocolAndPlan({ protocol, todayPlanFocus }: ProtocolAndPlanProps) {
   return (
     <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-white/[0.045] backdrop-blur shadow-sm p-4 space-y-3">
-      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Today's focus</h3>
+      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Today’s focus</h3>
 
       {/* Protocol */}
       {protocol && (
@@ -35,7 +35,7 @@ export default function ProtocolAndPlan({ protocol, todayPlanFocus }: ProtocolAn
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <Target className="size-4 text-sky-400" />
-            <span className="text-xs font-medium text-slate-900 dark:text-white">Today's Plan</span>
+            <span className="text-xs font-medium text-slate-900 dark:text-white">Today’s Plan</span>
           </div>
           <div className="text-xs text-slate-600 dark:text-slate-400 ml-6 leading-relaxed">
             {todayPlanFocus}

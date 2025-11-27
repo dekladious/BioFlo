@@ -37,7 +37,7 @@ export async function generateWithFallback(params: {
         ...conversationMessages,
       ],
       temperature: 0.4,
-      max_tokens: 2000,
+      max_completion_tokens: 2000,
     });
 
     const content = completion.choices[0]?.message?.content;

@@ -55,7 +55,7 @@ export const coldHotTherapy = registerTool({
       preferredTime: z.enum(["morning", "afternoon", "evening", "post_workout"]).optional(),
     }).optional(),
   }),
-  async handler({ experienceLevel, goals, access, scheduleConstraints }) {
+  async handler({ experienceLevel, goals, access, scheduleConstraints }, _context) {
     const daysPerWeek = scheduleConstraints?.daysPerWeek || 3;
     const preferredTime = scheduleConstraints?.preferredTime || "morning";
 

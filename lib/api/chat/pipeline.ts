@@ -58,8 +58,11 @@ export async function prepareChatPipeline({
   ];
 
   const userContextString = baseCoachContext.userProfile || "No profile data available";
-  const protocolContextString =
-    baseCoachContext.protocolStatus || "No active protocols";
+  const protocolContextString = baseCoachContext.protocolStatus || "No active protocols";
+  const checkInsContextString = baseCoachContext.recentCheckIns || "No recent check-ins";
+  const habitsContextString = baseCoachContext.habitsSummary || "No habits tracked";
+  const supplementsContextString = baseCoachContext.supplementsSummary || "No supplements tracked";
+  const experimentsContextString = baseCoachContext.experimentsSummary || "No experiments";
 
   if (
     llmMessages.length > 1 &&
@@ -67,8 +70,20 @@ export async function prepareChatPipeline({
   ) {
     llmMessages[llmMessages.length - 1] = {
       role: "user",
-      content: `[USER_CONTEXT]
+      content: `[USER_PROFILE]
 ${userContextString}
+
+[RECENT_CHECK_INS]
+${checkInsContextString}
+
+[HABITS]
+${habitsContextString}
+
+[SUPPLEMENTS]
+${supplementsContextString}
+
+[EXPERIMENTS]
+${experimentsContextString}
 
 [PROTOCOL_STATUS]
 ${protocolContextString}

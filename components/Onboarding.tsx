@@ -98,7 +98,7 @@ export function Onboarding({ onComplete }: { onComplete: (data: OnboardingData) 
 
         {step === 1 && (
           <div className="space-y-4">
-            <h2 className="text-2xl font-semibold text-white">What's your dietary preference?</h2>
+            <h2 className="text-2xl font-semibold text-white">What’s your dietary preference?</h2>
             <p className="text-slate-300">This helps us personalize your meal plans and recommendations.</p>
             <div className="grid gap-3">
               {["standard", "keto", "vegan", "vegetarian", "pescatarian", "carnivore", "paleo"].map((pref) => (
@@ -120,7 +120,7 @@ export function Onboarding({ onComplete }: { onComplete: (data: OnboardingData) 
         {step === 2 && (
           <div className="space-y-4">
             <h2 className="text-2xl font-semibold text-white">Do you practice intermittent fasting?</h2>
-            <p className="text-slate-300">Select your current fasting protocol, or skip if you don't fast.</p>
+            <p className="text-slate-300">Select your current fasting protocol, or skip if you don’t fast.</p>
             <div className="grid gap-3">
               {["14:10", "16:8", "18:6", "OMAD", "5:2"].map((protocol) => (
                 <button
@@ -138,7 +138,7 @@ export function Onboarding({ onComplete }: { onComplete: (data: OnboardingData) 
                 onClick={handleNext}
                 className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left hover:bg-white/[0.06] hover:border-white/20 transition text-slate-400"
               >
-                Skip (I don't fast)
+                Skip (I don’t fast)
               </button>
             </div>
           </div>
@@ -146,7 +146,7 @@ export function Onboarding({ onComplete }: { onComplete: (data: OnboardingData) 
 
         {step === 3 && (
           <div className="space-y-4">
-            <h2 className="text-2xl font-semibold text-white">What's your activity level?</h2>
+            <h2 className="text-2xl font-semibold text-white">What’s your activity level?</h2>
             <p className="text-slate-300">This helps us calculate your macros and recovery needs.</p>
             <div className="grid gap-3">
               {[
@@ -175,7 +175,7 @@ export function Onboarding({ onComplete }: { onComplete: (data: OnboardingData) 
 
         {step === 4 && (
           <div className="space-y-4">
-            <h2 className="text-2xl font-semibold text-white">What's your biohacking experience level?</h2>
+            <h2 className="text-2xl font-semibold text-white">What’s your biohacking experience level?</h2>
             <p className="text-slate-300">This helps us tailor protocol complexity to your needs.</p>
             <div className="grid gap-3">
               {[
@@ -202,7 +202,7 @@ export function Onboarding({ onComplete }: { onComplete: (data: OnboardingData) 
         {step === 5 && (
           <div className="space-y-4">
             <h2 className="text-2xl font-semibold text-white">What are your health goals?</h2>
-            <p className="text-slate-300">Select all that apply. We'll personalize your protocols accordingly.</p>
+            <p className="text-slate-300">Select all that apply. We’ll personalize your protocols accordingly.</p>
             <div className="grid gap-3">
               {[
                 "weight_loss",

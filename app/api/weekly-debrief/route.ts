@@ -1,11 +1,27 @@
 import { auth } from "@clerk/nextjs/server";
 import { query, queryOne } from "@/lib/db/client";
-import { generateWeeklyDebrief, CoachContext } from "@/lib/ai/gateway";
+import { generateWeeklyDebrief } from "@/lib/ai/gateway";
 import { getWearableSummaryForContext } from "@/lib/utils/wearable-summary";
+import { getProtocolStatusSummary } from "@/lib/utils/protocol-context";
+import {
+  getExperimentDigest,
+  getCareStatusDigest,
+  getWomensHealthDigest,
+} from "@/lib/utils/context-summaries";
+import { buildCheckInSummaries } from "@/lib/utils/trends";
 import { logger } from "@/lib/logger";
 import { getRequestMetadata, createErrorResponse } from "@/lib/api-utils";
 
 export const runtime = "nodejs";
+
+const GOAL_MODES = ["NORMAL", "RECOVERY", "TRAVEL", "DEEP_WORK", "RESET", "GROWTH"] as const;
+type GoalMode = (typeof GOAL_MODES)[number];
+
+function sanitizeMode(mode?: string | null): GoalMode {
+  if (!mode) return "NORMAL";
+  const upper = mode.toUpperCase();
+  return (GOAL_MODES as readonly string[]).includes(upper) ? (upper as GoalMode) : "NORMAL";
+}
 
 // GET: Fetch or generate weekly debrief
 export async function GET(req: Request) {
@@ -18,14 +34,16 @@ export async function GET(req: Request) {
     }
 
     // Get user ID from database
-    const user = await queryOne<{ id: string }>(
-      "SELECT id FROM users WHERE clerk_user_id = $1",
+    const user = await queryOne<{ id: string; today_mode: string | null }>(
+      "SELECT id, today_mode FROM users WHERE clerk_user_id = $1",
       [userId]
     );
 
     if (!user) {
       return createErrorResponse("User not found", requestId, 404);
     }
+
+    const goalMode = sanitizeMode(user.today_mode);
 
     // Calculate week boundaries (Monday to Sunday)
     const now = new Date();
@@ -101,37 +119,25 @@ export async function GET(req: Request) {
     const wearableSummary = await getWearableSummaryForContext(user.id, daysDiff);
 
     // Build check-ins summary
-    const summaries: string[] = [];
+    const { recentSummary, trendSummary } = buildCheckInSummaries(checkIns);
+    const protocolStatus = await getProtocolStatusSummary(user.id);
+    const [experimentDigest, careDigest, womensDigest] = await Promise.all([
+      getExperimentDigest(user.id, 5),
+      getCareStatusDigest(user.id),
+      getWomensHealthDigest(user.id),
+    ]);
 
-    if (checkIns.length > 0) {
-      const avgMood = checkIns
-        .filter((c) => c.mood !== null)
-        .reduce((sum, c) => sum + (c.mood || 0), 0) /
-        checkIns.filter((c) => c.mood !== null).length;
-      
-      const avgEnergy = checkIns
-        .filter((c) => c.energy !== null)
-        .reduce((sum, c) => sum + (c.energy || 0), 0) /
-        checkIns.filter((c) => c.energy !== null).length;
-
-      summaries.push(`Check-ins: ${checkIns.length} entries, avg mood ${avgMood ? avgMood.toFixed(1) : "N/A"}/10, avg energy ${avgEnergy ? avgEnergy.toFixed(1) : "N/A"}/10`);
-    }
-
-    if (wearableSummary) {
-      summaries.push(wearableSummary);
-    }
-
-    const combinedSummary = summaries.join(". ");
-
-    // Build context for AI Gateway
-    const context: CoachContext = {
-      userId,
-      messages: [], // Could include recent chat messages for context
-      profile: {
-        goals: (profile?.goals as Record<string, unknown>) || {},
-        mainStruggles: profile?.main_struggles || [],
-      },
-      wearableSummary: combinedSummary || undefined,
+    const context = {
+      weekRange: `${weekStartStr} to ${weekEndStr}`,
+      weeklyCheckIns: recentSummary,
+      weeklyWearableSummary: wearableSummary || undefined,
+      weeklyProtocolStatus: protocolStatus || "No protocol activity",
+      weeklyConversationSummary: `Goal mode ${goalMode}. ${profile?.goals ? "Goals updated." : ""}`.trim(),
+      weeklyExperiments: experimentDigest.summary,
+      careStatus: careDigest.summary,
+      womensHealthSummary: womensDigest.summary,
+      goalMode,
+      trendInsights: trendSummary,
     };
 
     // Generate debrief using AI Gateway

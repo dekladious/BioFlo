@@ -315,7 +315,10 @@ export const supplementRecommender = registerTool({
       withMeals: z.boolean().default(true),
     }).optional(),
   }),
-  async handler({ goals, currentSupplements, budget, experience, avoidInteractions, timingPreferences }) {
+  async handler(
+    { goals, currentSupplements, budget, experience, avoidInteractions, timingPreferences },
+    _context
+  ) {
     const recommendations: SupplementRecommendation[] = [];
     const usedSupplements = new Set<string>();
     const interactions: string[] = [];

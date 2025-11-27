@@ -46,17 +46,26 @@ export function getEnv(key: string, defaultValue?: string): string {
   return value || defaultValue || "";
 }
 
-// Validated environment variables getter
+/**
+ * Validated environment variables getter
+ * 
+ * Provides type-safe access to environment variables with sensible defaults.
+ * All AI model defaults use currently available production models.
+ */
 export const env = {
   openai: {
     apiKey: () => getEnv("OPENAI_API_KEY"),
+    /** Fast, cheap model for simple queries */
     cheapModel: () => getEnv("OPENAI_CHEAP_MODEL", "gpt-4o-mini"),
-    expensiveModel: () => getEnv("OPENAI_EXPENSIVE_MODEL", "gpt-5"),
+    /** High-quality model for complex reasoning */
+    expensiveModel: () => getEnv("OPENAI_EXPENSIVE_MODEL", "gpt-4o"),
+    /** Embedding model for RAG */
     embedModel: () => getEnv("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
   },
   anthropic: {
     apiKey: () => getEnv("ANTHROPIC_API_KEY"),
-    judgeModel: () => getEnv("ANTHROPIC_JUDGE_MODEL", "claude-4-5-sonnet"),
+    /** Claude model for safety judging and structured output */
+    judgeModel: () => getEnv("ANTHROPIC_JUDGE_MODEL", "claude-sonnet-4-20250514"),
   },
   analytics: {
     salt: () => getEnv("BIOFLO_ANALYTICS_SALT", "default-salt-change-in-production"),

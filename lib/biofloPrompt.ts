@@ -2,7 +2,7 @@
  * BioFlo Prompt Builder
  * 
  * Centralized prompt construction for BioFlo chat interactions.
- * Uses the master system prompt and integrates RAG context.
+ * Uses the master system prompt and integrates RAG context + user context.
  */
 
 import { BIOFLO_MASTER_SYSTEM_PROMPT } from "./ai/prompts/master";
@@ -19,15 +19,17 @@ export const BIOFLO_SYSTEM_PROMPT = BIOFLO_MASTER_SYSTEM_PROMPT;
  * 
  * @param params.userMessages - Array of user/assistant messages from the conversation
  * @param params.ragContext - Optional RAG context string from Supabase documents
+ * @param params.userContext - Optional user context summary (habits, supplements, check-ins, etc.)
  * @param params.sleepMode - Optional flag to use sleep coach mode
  * @returns Formatted messages array ready for OpenAI API
  */
 export function buildBiofloMessages(params: {
   userMessages: { role: "user" | "assistant" | "system"; content: string }[];
   ragContext?: string;
+  userContext?: string;
   sleepMode?: boolean;
 }): { role: "system" | "user" | "assistant"; content: string }[] {
-  const { userMessages, ragContext, sleepMode = false } = params;
+  const { userMessages, ragContext, userContext, sleepMode = false } = params;
   
   const messages: { role: "system" | "user" | "assistant"; content: string }[] = [];
   
@@ -48,6 +50,11 @@ export function buildBiofloMessages(params: {
   
   // Add user adaptation instructions
   systemPrompt = `${systemPrompt}\n\n${USER_ADAPTATION_INSTRUCTIONS}`;
+  
+  // Add user context if provided (habits, supplements, check-ins, experiments)
+  if (userContext && userContext.trim()) {
+    systemPrompt = `${systemPrompt}\n\n${userContext}\n\nUse this user context to personalize your responses. Reference their habits, supplements, recent energy/mood when relevant. Don't explicitly say "based on your context" - just naturally incorporate the information.`;
+  }
   
   // Add RAG context if provided
   if (ragContext && ragContext.trim()) {

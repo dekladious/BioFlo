@@ -3,16 +3,131 @@
 @tailwind utilities;
 
 @layer base {
-  html.dark,
-  html.dark body {
-    background-color: #0b1117;
-    color: rgb(241, 245, 249);
+  /* Dark theme (default) */
+  :root,
+  .dark {
+    color-scheme: dark;
+    --bg-app: #050813;
+    --bg-surface: #070d1c;
+    --bg-surface-alt: #0b1022;
+    --bg-elevated: #0f172a;
+    --bg-hero: radial-gradient(circle at 50% 0%, #0f172a 0%, #020617 65%);
+    --bg-metric-pill: linear-gradient(135deg, #111827, #020617);
+    --bg-card: rgba(255, 255, 255, 0.03);
+    --bg-card-hover: rgba(255, 255, 255, 0.06);
+
+    --text-primary: #f9fafb;
+    --text-muted: #9ca3af;
+    --text-soft: #6b7280;
+    --text-accent: linear-gradient(120deg, #38bdf8, #a855f7);
+
+    --border-subtle: rgba(148, 163, 184, 0.12);
+    --border-strong: rgba(148, 163, 184, 0.25);
+    --border-card: rgba(255, 255, 255, 0.1);
+
+    --accent-primary: #22d3ee;
+    --accent-secondary: #a855f7;
+    --accent-success: #4ade80;
+    --accent-warning: #facc15;
+    --accent-danger: #fb7185;
+
+    --shadow-card: 0 0 40px rgba(15, 23, 42, 0.8);
+
+    /* legacy aliases */
+    --bg-body: var(--bg-app);
+    --bg-elevated-soft: var(--bg-surface);
+    --text-main: var(--text-primary);
   }
 
-  html:not(.dark),
-  html:not(.dark) body {
-    background-color: #ffffff;
-    color: rgb(15, 23, 42);
+  /* Light theme */
+  .light {
+    color-scheme: light;
+    --bg-app: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-surface-alt: #f1f5f9;
+    --bg-elevated: #ffffff;
+    --bg-hero: radial-gradient(circle at 50% 0%, #e0f2fe 0%, #f8fafc 65%);
+    --bg-metric-pill: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+    --bg-card: rgba(0, 0, 0, 0.02);
+    --bg-card-hover: rgba(0, 0, 0, 0.04);
+
+    --text-primary: #0f172a;
+    --text-muted: #475569;
+    --text-soft: #64748b;
+    --text-accent: linear-gradient(120deg, #0284c7, #7c3aed);
+
+    --border-subtle: rgba(15, 23, 42, 0.08);
+    --border-strong: rgba(15, 23, 42, 0.15);
+    --border-card: rgba(0, 0, 0, 0.08);
+
+    --accent-primary: #0891b2;
+    --accent-secondary: #7c3aed;
+    --accent-success: #16a34a;
+    --accent-warning: #ca8a04;
+    --accent-danger: #dc2626;
+
+    --shadow-card: 0 4px 24px rgba(15, 23, 42, 0.08);
+
+    /* legacy aliases */
+    --bg-body: var(--bg-app);
+    --bg-elevated-soft: var(--bg-surface);
+    --text-main: var(--text-primary);
+  }
+
+  html,
+  body {
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  body {
+    min-height: 100vh;
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background-image: var(--bg-hero);
+    background-attachment: fixed;
+  }
+
+  /* Dark mode gradient overlays */
+  .dark body::before,
+  .dark body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -2;
+  }
+
+  .dark body::before {
+    background: radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.18), transparent 60%),
+      radial-gradient(circle at 85% 0%, rgba(168, 85, 247, 0.18), transparent 55%);
+    opacity: 0.35;
+  }
+
+  .dark body::after {
+    background: radial-gradient(65% 90% at 50% 120%, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.9));
+    opacity: 1;
+  }
+
+  /* Light mode gradient overlays */
+  .light body::before,
+  .light body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -2;
+  }
+
+  .light body::before {
+    background: radial-gradient(circle at 10% 20%, rgba(14, 165, 233, 0.08), transparent 60%),
+      radial-gradient(circle at 85% 0%, rgba(124, 58, 237, 0.08), transparent 55%);
+    opacity: 0.6;
+  }
+
+  .light body::after {
+    background: radial-gradient(65% 90% at 50% 120%, rgba(255, 255, 255, 0), rgba(248, 250, 252, 0.5));
+    opacity: 1;
   }
 
   a {
@@ -25,7 +140,7 @@
   h3,
   h4 {
     font-weight: 600;
-    letter-spacing: -0.025em;
+    letter-spacing: -0.02em;
   }
 }
 
@@ -42,6 +157,60 @@
   .animate-fiber-sweep {
     animation: fiber-sweep 26s ease-in-out infinite alternate;
   }
+
+  .gradient-text {
+    background-image: linear-gradient(120deg, #38bdf8, #a855f7);
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  .light .gradient-text {
+    background-image: linear-gradient(120deg, #0284c7, #7c3aed);
+  }
+
+  .text-main {
+    color: var(--text-primary);
+  }
+
+  .text-muted {
+    color: var(--text-muted);
+  }
+
+  .text-soft {
+    color: var(--text-soft);
+  }
+
+  .text-faint {
+    color: var(--text-faint);
+  }
+
+  .border-subtle {
+    border-color: var(--border-subtle);
+  }
+
+  .border-strong {
+    border-color: var(--border-strong);
+  }
+
+  .glass-card {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 1.5rem;
+    box-shadow: var(--shadow-card);
+  }
+}
+
+@layer components {
+  .divider-glow {
+    position: relative;
+    height: 1px;
+    width: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+  }
+
+  .light .divider-glow {
+    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.1), transparent);
+  }
 }
 
 /* Markdown prose styles for chat */
@@ -53,17 +222,10 @@
 .prose h2,
 .prose h3,
 .prose h4 {
-  color: rgb(15, 23, 42);
+  color: var(--text-primary);
   font-weight: 600;
   margin-top: 1.5em;
   margin-bottom: 0.5em;
-}
-
-.dark .prose h1,
-.dark .prose h2,
-.dark .prose h3,
-.dark .prose h4 {
-  color: rgb(241, 245, 249);
 }
 
 .prose h1 {
@@ -82,6 +244,7 @@
   margin-top: 0.75em;
   margin-bottom: 0.75em;
   line-height: 1.6;
+  color: var(--text-soft);
 }
 
 .prose ul,
@@ -108,16 +271,18 @@
 }
 
 .prose pre {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: rgba(241, 245, 249, 0.9);
   padding: 1em;
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   overflow-x: auto;
   margin-top: 1em;
   margin-bottom: 1em;
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .dark .prose pre {
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(12, 17, 32, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .prose pre code {
@@ -126,44 +291,41 @@
 }
 
 .prose hr {
-  border-color: rgba(0, 0, 0, 0.1);
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.1), transparent);
   margin-top: 2em;
   margin-bottom: 2em;
 }
 
 .dark .prose hr {
-  border-color: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
 }
 
 .prose blockquote {
-  border-left: 3px solid rgba(0, 0, 0, 0.2);
+  border-left: 3px solid rgba(0, 0, 0, 0.15);
   padding-left: 1em;
   margin-left: 0;
   font-style: italic;
-  color: rgba(0, 0, 0, 0.7);
+  color: var(--text-muted);
 }
 
 .dark .prose blockquote {
   border-left: 3px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.8);
 }
 
 .prose a {
-  color: rgb(56, 189, 248);
+  color: var(--accent-primary);
   text-decoration: underline;
 }
 
 .prose a:hover {
-  color: rgb(125, 211, 252);
+  color: var(--accent-secondary);
 }
 
 .prose strong {
   font-weight: 600;
-  color: rgb(15, 23, 42);
-}
-
-.dark .prose strong {
-  color: rgb(241, 245, 249);
+  color: var(--text-primary);
 }
 
 .prose table {
@@ -194,23 +356,34 @@
   background-color: rgba(255, 255, 255, 0.05);
 }
 
-/* subtle scrollbar */
-*::-webkit-scrollbar {
+/* Scrollbar - light mode */
+.light *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
-*::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+.light *::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
   border-radius: 9999px;
-  border: 2px solid rgba(255, 255, 255, 0.9);
+  border: 2px solid rgba(248, 250, 252, 0.9);
+}
+
+.light *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Scrollbar - dark mode */
+.dark *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
 
 .dark *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border: 2px solid rgba(11, 17, 23, 0.9);
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  border: 2px solid rgba(5, 5, 11, 0.4);
 }
 
-*::-webkit-scrollbar-track {
+.dark *::-webkit-scrollbar-track {
   background: transparent;
 }

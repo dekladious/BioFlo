@@ -84,8 +84,8 @@ export type StreamModelArgs = RunModelArgs & {
 
 // Default models (latest stable versions)
 export const DEFAULT_MODELS = {
-  openai: "gpt-5", // GPT‑5 (primary)
-  anthropic: "claude-4-5-sonnet", // Claude 4.5 Sonnet (fallback)
+  openai: "gpt-4o", // GPT-4o (primary)
+  anthropic: "claude-sonnet-4-20250514", // Claude Sonnet 4 (fallback)
 } as const;
 
 // Custom error classes for better error handling
@@ -190,7 +190,7 @@ async function runOpenAI({
           ...messages,
         ],
         temperature: 0.7,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
       }),
       2, // max retries
       1000 // initial delay
@@ -399,7 +399,7 @@ async function streamOpenAI({
         ...messages,
       ],
       temperature: 0.7,
-      max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
       stream: true,
     });
 

@@ -38,7 +38,7 @@ export const macroCalculator = registerTool({
     dietaryPreference: z.enum(["standard", "keto", "low_carb", "high_carb", "high_protein", "paleo"]).default("standard"),
     mealsPerDay: z.number().min(1).max(6).default(3),
   }),
-  async handler({ goal, activityLevel, bodyStats, dietaryPreference, mealsPerDay }) {
+  async handler({ goal, activityLevel, bodyStats, dietaryPreference, mealsPerDay }, _context) {
     const { weight, height, age, bodyFat } = bodyStats;
     
     // Calculate BMR (Basal Metabolic Rate) using Mifflin-St Jeor Equation

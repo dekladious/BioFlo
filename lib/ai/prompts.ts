@@ -20,6 +20,12 @@ export type CoachContext = {
   todayMode?: string;
   recentMessages?: string;
   sleepMode?: boolean;
+  experimentsSummary?: string;
+  trendInsights?: string;
+  careStatus?: string;
+  womensHealthSummary?: string;
+  habitsSummary?: string;
+  supplementsSummary?: string;
 };
 
 /**
@@ -72,6 +78,18 @@ ${context.wearableSummary || "No wearable data available"}
 
 [PROTOCOL_STATUS]
 ${context.protocolStatus || "No active protocols"}
+
+[EXPERIMENTS]
+${context.experimentsSummary || "No experiments logged"}
+
+[TREND_INSIGHTS]
+${context.trendInsights || "No trend insights available"}
+
+[CARE_STATUS]
+${context.careStatus || "Care mode not configured"}
+
+[WOMENS_HEALTH]
+${context.womensHealthSummary || "No women's health info provided"}
 ${ragContextBlock}
 
 [RECENT_MESSAGES]
@@ -187,6 +205,18 @@ ${context.wearableSummary || "No wearable data available"}
 [PROTOCOL_STATUS]
 ${context.protocolStatus || "No active protocols"}
 
+[EXPERIMENTS]
+${context.experimentsSummary || "No experiments logged"}
+
+[TREND_INSIGHTS]
+${context.trendInsights || "No trend insights available"}
+
+[CARE_STATUS]
+${context.careStatus || "Care mode not configured"}
+
+[WOMENS_HEALTH]
+${context.womensHealthSummary || "No women's health info provided"}
+
 [TODAY_MODE]
 ${context.todayMode || "NORMAL"}
 
@@ -202,6 +232,8 @@ The plan should:
 - Use wearable data if available (e.g. poor sleep or low HRV -> more recovery emphasis).
 - Honour the current mode (e.g. TRAVEL / RECOVERY).
 - Integrate any active protocol steps when relevant.
+- Respect experiment boundaries (e.g. caffeine cutoff, fasting window).
+- If care mode is enabled, include a short self-check or reminder where appropriate.
 - Be realistically achievable.
 
 OUTPUT FORMAT (IMPORTANT)
@@ -248,6 +280,11 @@ export function buildWeeklyDebriefPrompt(context: {
   weeklyWearableSummary?: string;
   weeklyProtocolStatus?: string;
   weeklyConversationSummary?: string;
+  weeklyExperiments?: string;
+  careStatus?: string;
+  womensHealthSummary?: string;
+  goalMode?: string;
+  trendInsights?: string;
 }): { system: string; user: string } {
   const userPrompt = `You are generating a weekly debrief for this user.
 
@@ -265,6 +302,21 @@ ${context.weeklyProtocolStatus || "No protocol activity"}
 
 [WEEKLY_CONVERSATION_SUMMARY]
 ${context.weeklyConversationSummary || "No conversation history"}
+
+[WEEKLY_EXPERIMENTS]
+${context.weeklyExperiments || "No experiments logged"}
+
+[CARE_STATUS]
+${context.careStatus || "Care mode not configured"}
+
+[WOMENS_HEALTH]
+${context.womensHealthSummary || "No women's health notes"}
+
+[GOAL_MODE]
+${context.goalMode || "NORMAL"}
+
+[TREND_INSIGHTS]
+${context.trendInsights || "No trend deltas captured"}
 
 TASK
 Summarise their week and set up a focus for the next week.

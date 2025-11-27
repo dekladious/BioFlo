@@ -1,177 +1,79 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { randomUUID } from "crypto";
-import { ModelError, streamModel } from "@/lib/ai/modelRouter";
 import { detectToolFromUserText, getTool } from "@/lib/ai/tools";
-import { classifyRequest } from "@/lib/ai/classifier";
-import { chooseModels } from "@/lib/ai/modelRouter";
-import { buildRagContext, retrieveRelevantContext, getRelevantLongevityDocs, formatLongevityKnowledgeSnippets, getSleepContext, formatSleepContext, isSleepQuery } from "@/lib/ai/rag";
-import { buildSystemPrompt } from "@/lib/ai/systemPrompt";
 import { judgeAnswer, rewriteUnsafeAnswer } from "@/lib/ai/safety";
 import { generateWithFallback } from "@/lib/ai/fallback";
 import { buildTriageForBlocked, buildGenericSafeAnswer } from "@/lib/ai/triage";
 import { getAiUserId } from "@/lib/analytics/userId";
 import { logAnalyticsEvent, logApiError } from "@/lib/analytics/logging";
-import { CHAT, RATE_LIMITS } from "@/lib/constants";
+import { persistChatHistory } from "@/lib/ai/chat/history";
+import {
+  createStreamResponse,
+  streamTextChunks,
+  streamWithFallback,
+} from "@/lib/ai/chat/streaming";
 import { logger } from "@/lib/logger";
-import { rateLimit, getRateLimitIdentifier } from "@/lib/rate-limit";
-import { ClerkPublicMetadata } from "@/types";
-import { getRequestMetadata, validateContentType, withTimeout, createErrorResponse } from "@/lib/api-utils";
-import { queryOne } from "@/lib/db/client";
-import "@/lib/ai/tools/mealPlanner"; // ensure tool registers
-import "@/lib/ai/tools/supplementRecommender"; // ensure tool registers
-import "@/lib/ai/tools/sleepOptimizer"; // ensure tool registers
-import "@/lib/ai/tools/protocolBuilder"; // ensure tool registers
-import "@/lib/ai/tools/womensHealth"; // ensure tool registers
-import "@/lib/ai/tools/fastingPlanner"; // ensure tool registers
-import "@/lib/ai/tools/coldHotTherapy"; // ensure tool registers
-import "@/lib/ai/tools/stressManagement"; // ensure tool registers
-import "@/lib/ai/tools/macroCalculator"; // ensure tool registers
-import "@/lib/ai/tools/recoveryOptimizer"; // ensure tool registers
+import { createErrorResponse } from "@/lib/api-utils";
+import { ChatValidationError, validateAndNormalizeMessages } from "@/lib/api/chat/validation";
+import { enforceChatGuards } from "@/lib/api/chat/guard";
+import { classifyAndHandleTriage } from "@/lib/api/chat/classification";
+import { prepareChatPipeline } from "@/lib/api/chat/pipeline";
+import "@/lib/ai/tools/mealPlanner";
+import "@/lib/ai/tools/supplementRecommender";
+import "@/lib/ai/tools/sleepOptimizer";
+import "@/lib/ai/tools/protocolBuilder";
+import "@/lib/ai/tools/womensHealth";
+import "@/lib/ai/tools/fastingPlanner";
+import "@/lib/ai/tools/coldHotTherapy";
+import "@/lib/ai/tools/stressManagement";
+import "@/lib/ai/tools/macroCalculator";
+import "@/lib/ai/tools/recoveryOptimizer";
+import "@/lib/ai/tools/experiments";
 
 export const runtime = "nodejs";
 
-// Rate limiting: 20 requests per 5 minutes per user
-const RATE_LIMIT_CONFIG = RATE_LIMITS.CHAT;
-
-// AI API timeout (30 seconds)
-const AI_TIMEOUT_MS = 30000;
+const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const forEachItem = <T>(value: unknown, handler: (item: T, index: number) => void) => {
+  if (Array.isArray(value)) {
+    (value as T[]).forEach(handler);
+  }
+};
 
 export async function POST(req: Request) {
-  const { ip, requestId } = getRequestMetadata(req);
-  
+  let requestId = "";
+  let ip = "";
+  let userId = "";
+  let aiUserId = "";
+
   try {
-    // Validate Content-Type
-    if (!validateContentType(req)) {
-      logger.warn("Chat API: Invalid Content-Type", { requestId, ip });
-      return createErrorResponse("Content-Type must be application/json", requestId, 400);
+    const guard = await enforceChatGuards(req);
+    if (!guard.ok) {
+      return guard.response;
     }
-
-    // Validate request size (10MB max)
-    const contentLength = req.headers.get("content-length");
-    if (contentLength && parseInt(contentLength) > 10 * 1024 * 1024) {
-      logger.warn("Chat API: Request too large", { requestId, contentLength });
-      return createErrorResponse("Request payload too large", requestId, 413);
-    }
-
-    // Authentication
-    const { userId } = await auth();
-    if (!userId) {
-      logger.warn("Chat API: Unauthorized request", { requestId, ip });
-      return createErrorResponse("Unauthorized", requestId, 401);
-    }
-
-    // Rate limiting (skip in development if DISABLE_RATE_LIMIT is set)
-    let rateLimitResult;
-    const disableRateLimit = process.env.DISABLE_RATE_LIMIT === "true" || process.env.DISABLE_RATE_LIMIT === "1";
-    const isDevelopment = process.env.NODE_ENV === "development" || !process.env.NODE_ENV;
-    // Log rate limit status for debugging
-    logger.debug("Rate limit check", { 
-      disableRateLimit, 
-      isDevelopment, 
-      DISABLE_RATE_LIMIT: process.env.DISABLE_RATE_LIMIT,
-      NODE_ENV: process.env.NODE_ENV,
-      userId,
-      requestId 
-    });
-    
-    if (disableRateLimit && isDevelopment) {
-      // Skip rate limiting in dev mode if explicitly disabled
-      logger.info("Rate limiting DISABLED in development", { userId, requestId });
-      rateLimitResult = {
-        success: true,
-        remaining: RATE_LIMIT_CONFIG.maxRequests,
-        resetAt: Date.now() + RATE_LIMIT_CONFIG.windowMs,
-      };
-    } else {
-      const identifier = getRateLimitIdentifier(userId, ip);
-      rateLimitResult = rateLimit(identifier, RATE_LIMIT_CONFIG);
-      logger.debug("Rate limit check result", { 
-        success: rateLimitResult.success, 
-        remaining: rateLimitResult.remaining,
-        identifier,
-        userId,
-        requestId 
-      });
-      
-      if (!rateLimitResult.success) {
-        logger.warn("Chat API: Rate limit exceeded", { 
-        userId, 
-        identifier, 
-        retryAfter: rateLimitResult.retryAfter,
-        requestId,
-      });
-      return Response.json(
-        { 
-          success: false,
-            error: `Rate limit exceeded. You've used ${RATE_LIMIT_CONFIG.maxRequests} requests. Please try again in ${Math.ceil((rateLimitResult.retryAfter || 0) / 60)} minute${Math.ceil((rateLimitResult.retryAfter || 0) / 60) !== 1 ? 's' : ''}.`,
-          retryAfter: rateLimitResult.retryAfter,
-          requestId,
-          timestamp: new Date().toISOString(),
-        }, 
-        { 
-          status: 429,
-          headers: {
-            "Retry-After": String(rateLimitResult.retryAfter || 0),
-            "X-RateLimit-Limit": String(RATE_LIMIT_CONFIG.maxRequests),
-            "X-RateLimit-Remaining": String(rateLimitResult.remaining),
-            "X-RateLimit-Reset": String(rateLimitResult.resetAt),
-            "X-Request-Id": requestId,
-          },
-        }
-      );
-      }
-    }
-    
-    const responseHeaders = {
-      "X-RateLimit-Limit": String(RATE_LIMIT_CONFIG.maxRequests),
-      "X-RateLimit-Remaining": String(rateLimitResult.remaining ?? 0),
-      "X-RateLimit-Reset": String(rateLimitResult.resetAt ?? Date.now()),
-      "X-Request-Id": requestId,
-    };
-    
-    // Paywall check
-    const user = await currentUser();
-    const isPro = Boolean((user?.publicMetadata as ClerkPublicMetadata)?.isPro);
-    const bypassPaywall = process.env.BYPASS_PAYWALL === "true"; // For development/testing
-    if (!isPro && !bypassPaywall) {
-      logger.info("Chat API: Subscription required", { userId, requestId });
-      return createErrorResponse("Subscription required", requestId, 402);
-    }
+    userId = guard.userId;
+    ip = guard.ip;
+    requestId = guard.requestId;
+    const responseHeaders = guard.responseHeaders;
 
     // Parse and validate request body
     const body = await req.json();
     const { messages, sessionId: incomingSessionId, domain } = body;
     const sessionIdForHistory = incomingSessionId || randomUUID();
-    
-    // Input validation
-    if (!Array.isArray(messages)) {
-      logger.warn("Chat API: Invalid messages format", { requestId, userId });
-      return createErrorResponse("Messages must be an array", requestId, 400);
-    }
-    if (messages.length === 0) {
-      logger.warn("Chat API: Empty messages", { requestId, userId });
-      return createErrorResponse("Messages cannot be empty", requestId, 400);
-    }
-    if (messages.length > CHAT.MAX_MESSAGES) {
-      logger.warn("Chat API: Too many messages", { requestId, userId, count: messages.length });
-      return createErrorResponse(`Maximum ${CHAT.MAX_MESSAGES} messages allowed`, requestId, 400);
-    }
-    
-    // Validate message format and length
-    for (const msg of messages) {
-      if (!msg.role || !msg.content || typeof msg.content !== "string") {
-        logger.warn("Chat API: Invalid message format", { requestId, userId });
-        return createErrorResponse("Invalid message format", requestId, 400);
-      }
-      if (msg.content.length > CHAT.MAX_MESSAGE_LENGTH) {
-        logger.warn("Chat API: Message too long", { requestId, userId, length: msg.content.length });
-        return createErrorResponse(`Message too long (max ${CHAT.MAX_MESSAGE_LENGTH} characters)`, requestId, 400);
-      }
-    }
 
-    // Get last user message for tool detection and safety checks
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    const userContent = lastUser?.content || "";
+    let conversationMessages;
+    let userContent: string;
+
+    try {
+      const validation = validateAndNormalizeMessages(messages);
+      conversationMessages = validation.normalizedMessages;
+      userContent = validation.latestUserMessage;
+    } catch (error) {
+      if (error instanceof ChatValidationError) {
+        logger.warn(`Chat API: ${error.message}`, { requestId, userId });
+        return createErrorResponse(error.message, requestId, 400);
+      }
+      throw error;
+    }
 
     // Note: Triage and routing is now handled inside generateCoachReply
     // We still log for monitoring, but the gateway handles all routing
@@ -185,11 +87,11 @@ export async function POST(req: Request) {
         
         const parsed = tool.input.safeParse(maybeTool.args);
         if (!parsed.success) {
-          logger.warn("Chat API: Tool input validation failed", { 
-            userId, 
-            toolName: tool.name, 
-            errors: parsed.error.errors,
-            requestId 
+          logger.warn("Chat API: Tool input validation failed", {
+            userId,
+            toolName: tool.name,
+            errors: parsed.error.issues,
+            requestId,
           });
           return Response.json({ 
             success: true,
@@ -202,7 +104,7 @@ export async function POST(req: Request) {
     }
 
         try {
-          const result = await tool.handler(parsed.data);
+          const result = await tool.handler(parsed.data, { userId, requestId });
           
           // Format tool response based on tool type
           const lines: string[] = [];
@@ -216,13 +118,16 @@ export async function POST(req: Request) {
             lines.push("---");
             lines.push("");
             
-            for (const m of result.plan) {
+            const mealPlanEntries = Array.isArray(result.plan)
+              ? (result.plan as Array<Record<string, any>>)
+              : [];
+            for (const m of mealPlanEntries) {
               lines.push(`### ${m.name}${m.timing ? ` (${m.timing})` : ""}`);
               lines.push(`**${m.kcal} kcal** | Protein: ${m.protein}g | Carbs: ${m.carbs}g | Fat: ${m.fat}g`);
               lines.push("");
-              m.items.forEach(item => {
+              for (const item of toArray<string>(m.items)) {
                 lines.push(`- ${item}`);
-              });
+              }
               lines.push("");
             }
             
@@ -236,9 +141,9 @@ export async function POST(req: Request) {
               lines.push(`**Fasting Window:** ${result.fastingRecommendations.fastingWindow}`);
               lines.push("");
               lines.push("**Benefits:**");
-              result.fastingRecommendations.benefits.forEach(benefit => {
+              for (const benefit of toArray<string>(result.fastingRecommendations.benefits)) {
                 lines.push(`- ${benefit}`);
-              });
+              }
               lines.push("");
               lines.push(`*${result.fastingRecommendations.notes}*`);
               lines.push("");
@@ -259,13 +164,13 @@ export async function POST(req: Request) {
               lines.push("");
             }
             
-            if (result.tips && Array.isArray(result.tips) && result.tips.length > 0) {
+            if (Array.isArray(result.tips) && result.tips.length > 0) {
               lines.push("---");
               lines.push("");
               lines.push("### 💡 Tips");
-              result.tips.forEach(tip => {
+              for (const tip of toArray<string>(result.tips)) {
                 lines.push(`- ${tip}`);
-              });
+              }
               lines.push("");
             }
           } else if (tool.name === "supplementRecommender") {
@@ -285,7 +190,10 @@ export async function POST(req: Request) {
             // Supplement list
             lines.push("### Recommended Supplements");
             lines.push("");
-            result.stack?.supplements?.forEach((supp, idx) => {
+            const supplementStack = Array.isArray(result.stack?.supplements)
+              ? (result.stack?.supplements as Array<Record<string, any>>)
+              : [];
+            supplementStack.forEach((supp, idx) => {
               lines.push(`**${idx + 1}. ${supp.name}**`);
               lines.push(`- **Dosage:** ${supp.dosage}`);
               lines.push(`- **Timing:** ${supp.timing}`);
@@ -302,11 +210,14 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### ⏰ Timing Schedule");
               lines.push("");
-              result.stack.timingSchedule.forEach(schedule => {
+              const timingSchedule = Array.isArray(result.stack.timingSchedule)
+                ? (result.stack.timingSchedule as Array<Record<string, any>>)
+                : [];
+              timingSchedule.forEach((schedule) => {
                 lines.push(`**${schedule.time}**`);
-                schedule.supplements.forEach(supp => {
+                for (const supp of toArray<string>(schedule.supplements)) {
                   lines.push(`- ${supp}`);
-                });
+                }
                 if (schedule.notes) {
                   lines.push(`  *${schedule.notes}*`);
                 }
@@ -320,9 +231,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### ⚠️ Interactions to Consider");
               lines.push("");
-              result.stack.interactions.forEach(interaction => {
+              for (const interaction of toArray<string>(result.stack.interactions)) {
                 lines.push(`- ${interaction}`);
-              });
+              }
               lines.push("");
             }
             
@@ -332,9 +243,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### ⚠️ Precautions");
               lines.push("");
-              result.stack.precautions.forEach(precaution => {
+              for (const precaution of toArray<string>(result.stack.precautions)) {
                 lines.push(`- ${precaution}`);
-              });
+              }
               lines.push("");
             }
           } else if (tool.name === "sleepOptimizer") {
@@ -355,18 +266,19 @@ export async function POST(req: Request) {
             
             // Protocols
             if (result.recommendation?.protocols && result.recommendation.protocols.length > 0) {
-              result.recommendation.protocols.forEach((protocol, idx) => {
+              const protocols = result.recommendation.protocols as Array<Record<string, any>>;
+              protocols.forEach((protocol, idx) => {
                 lines.push(`### ${idx + 1}. ${protocol.name}`);
                 lines.push(protocol.description);
                 lines.push("");
-                protocol.steps.forEach(step => {
+                for (const step of toArray<Record<string, any>>(protocol.steps)) {
                   lines.push(`**${step.time}**`);
                   lines.push(`- ${step.action}${step.duration ? ` (${step.duration})` : ""}`);
                   if (step.notes) {
                     lines.push(`  *${step.notes}*`);
                   }
                   lines.push("");
-                });
+                }
                 if (idx < result.recommendation.protocols.length - 1) {
                   lines.push("---");
                   lines.push("");
@@ -403,13 +315,13 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💊 Sleep Supplements (Optional)");
               lines.push("");
-              result.recommendation.supplements.forEach(supp => {
+              for (const supp of toArray<Record<string, any>>(result.recommendation.supplements)) {
                 lines.push(`**${supp.name}**`);
                 lines.push(`- Dosage: ${supp.dosage}`);
                 lines.push(`- Timing: ${supp.timing}`);
                 lines.push(`- Purpose: ${supp.purpose}`);
                 lines.push("");
-              });
+              }
             }
             
             // Environment
@@ -418,13 +330,13 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 🏠 Sleep Environment");
               lines.push("");
-              result.recommendation.environment.forEach(env => {
+              for (const env of toArray<Record<string, any>>(result.recommendation.environment)) {
                 lines.push(`**${env.category}**`);
-                env.recommendations.forEach(rec => {
+                for (const rec of toArray<string>(env.recommendations)) {
                   lines.push(`- ${rec}`);
-                });
+                }
                 lines.push("");
-              });
+              }
             }
             
             // Tips
@@ -433,9 +345,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💡 Sleep Tips");
               lines.push("");
-              result.recommendation.tips.forEach(tip => {
+              for (const tip of toArray<string>(result.recommendation.tips)) {
                 lines.push(`- ${tip}`);
-              });
+              }
               lines.push("");
             }
           } else if (tool.name === "protocolBuilder") {
@@ -454,7 +366,8 @@ export async function POST(req: Request) {
             if (result.protocol?.phases && result.protocol.phases.length > 0) {
               lines.push("### 📋 Protocol Phases");
               lines.push("");
-              result.protocol.phases.forEach((phase, idx) => {
+              const protocolPhases = result.protocol.phases as Array<Record<string, any>>;
+              protocolPhases.forEach((phase, idx) => {
                 lines.push(`#### Phase ${idx + 1}: ${phase.name}`);
                 lines.push(`**Duration:** ${phase.duration}`);
                 lines.push(`**Description:** ${phase.description}`);
@@ -463,13 +376,13 @@ export async function POST(req: Request) {
                 
                 if (phase.steps && phase.steps.length > 0) {
                   lines.push("**Key Steps:**");
-                  phase.steps.forEach(step => {
+                  for (const step of toArray<Record<string, any>>(phase.steps)) {
                     lines.push(`- **Day ${step.day} - ${step.category}:** ${step.action}`);
                     lines.push(`  - ${step.details}`);
                     if (step.timing) lines.push(`  - Timing: ${step.timing}`);
                     if (step.notes) lines.push(`  - Note: ${step.notes}`);
                     lines.push("");
-                  });
+                  }
                 }
                 
                 if (idx < result.protocol.phases.length - 1) {
@@ -485,13 +398,13 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### ⏰ Daily Routine");
               lines.push("");
-              result.protocol.dailyRoutine.forEach(slot => {
+              for (const slot of toArray<Record<string, any>>(result.protocol.dailyRoutine)) {
                 lines.push(`**${slot.time}**`);
-                slot.actions.forEach(action => {
+                for (const action of toArray<string>(slot.actions)) {
                   lines.push(`- ${action}`);
-                });
+                }
                 lines.push("");
-              });
+              }
             }
 
             // Metrics
@@ -500,14 +413,14 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 📊 Metrics to Track");
               lines.push("");
-              result.protocol.metrics.forEach(metric => {
+              for (const metric of toArray<Record<string, any>>(result.protocol.metrics)) {
                 lines.push(`**${metric.metric}**`);
                 lines.push(`- How to measure: ${metric.howToMeasure}`);
                 if (metric.target) {
                   lines.push(`- Target: ${metric.target}`);
                 }
                 lines.push("");
-              });
+              }
             }
 
             // Supplements
@@ -516,13 +429,13 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💊 Recommended Supplements");
               lines.push("");
-              result.protocol.supplements.forEach(supp => {
+              for (const supp of toArray<Record<string, any>>(result.protocol.supplements)) {
                 lines.push(`**${supp.name}**`);
                 lines.push(`- Dosage: ${supp.dosage}`);
                 lines.push(`- Timing: ${supp.timing}`);
                 lines.push(`- Purpose: ${supp.purpose}`);
                 lines.push("");
-              });
+              }
             }
 
             // Tips
@@ -531,9 +444,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💡 Tips for Success");
               lines.push("");
-              result.protocol.tips.forEach(tip => {
+              for (const tip of toArray<string>(result.protocol.tips)) {
                 lines.push(`- ${tip}`);
-              });
+              }
               lines.push("");
             }
 
@@ -543,9 +456,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### ⚠️ Important Warnings");
               lines.push("");
-              result.protocol.warnings.forEach(warning => {
+              for (const warning of toArray<string>(result.protocol.warnings)) {
                 lines.push(`- ${warning}`);
-              });
+              }
               lines.push("");
             }
           } else if (tool.name === "womensHealth") {
@@ -564,35 +477,36 @@ export async function POST(req: Request) {
             if (result.protocol?.protocols && result.protocol.protocols.length > 0) {
               lines.push("### 📅 Cycle-Based Protocols");
               lines.push("");
-              result.protocol.protocols.forEach((phaseProtocol, idx) => {
+              const cycleProtocols = result.protocol.protocols as Array<Record<string, any>>;
+              cycleProtocols.forEach((phaseProtocol, idx) => {
                 lines.push(`#### ${phaseProtocol.phase.charAt(0).toUpperCase() + phaseProtocol.phase.slice(1)} Phase (${phaseProtocol.days})`);
                 lines.push(phaseProtocol.description);
                 lines.push("");
                 
                 lines.push("**Nutrition:**");
-                phaseProtocol.recommendations.nutrition.forEach(rec => {
+                for (const rec of toArray<string>(phaseProtocol.recommendations?.nutrition)) {
                   lines.push(`- ${rec}`);
-                });
+                }
                 lines.push("");
 
                 lines.push("**Exercise:**");
-                phaseProtocol.recommendations.exercise.forEach(rec => {
+                for (const rec of toArray<string>(phaseProtocol.recommendations?.exercise)) {
                   lines.push(`- ${rec}`);
-                });
+                }
                 lines.push("");
 
-                if (phaseProtocol.recommendations.supplements.length > 0) {
+                if (phaseProtocol.recommendations?.supplements?.length > 0) {
                   lines.push("**Supplements:**");
-                  phaseProtocol.recommendations.supplements.forEach(supp => {
+                  for (const supp of toArray<Record<string, any>>(phaseProtocol.recommendations?.supplements)) {
                     lines.push(`- **${supp.name}:** ${supp.dosage} - ${supp.timing} (${supp.purpose})`);
-                  });
+                  }
                   lines.push("");
                 }
 
                 lines.push("**Lifestyle:**");
-                phaseProtocol.recommendations.lifestyle.forEach(rec => {
+                for (const rec of toArray<string>(phaseProtocol.recommendations?.lifestyle)) {
                   lines.push(`- ${rec}`);
-                });
+                }
                 lines.push("");
 
                 if (idx < result.protocol.protocols.length - 1) {
@@ -610,29 +524,29 @@ export async function POST(req: Request) {
               lines.push("");
 
               lines.push("**Nutrition:**");
-              result.protocol.generalProtocol.nutrition.forEach(rec => {
+              for (const rec of toArray<string>(result.protocol.generalProtocol.nutrition)) {
                 lines.push(`- ${rec}`);
-              });
+              }
               lines.push("");
 
               lines.push("**Exercise:**");
-              result.protocol.generalProtocol.exercise.forEach(rec => {
+              for (const rec of toArray<string>(result.protocol.generalProtocol.exercise)) {
                 lines.push(`- ${rec}`);
-              });
+              }
               lines.push("");
 
               if (result.protocol.generalProtocol.supplements.length > 0) {
                 lines.push("**Supplements:**");
-                result.protocol.generalProtocol.supplements.forEach(supp => {
+                for (const supp of toArray<Record<string, any>>(result.protocol.generalProtocol.supplements)) {
                   lines.push(`- **${supp.name}:** ${supp.dosage} - ${supp.timing} (${supp.purpose})`);
-                });
+                }
                 lines.push("");
               }
 
               lines.push("**Lifestyle:**");
-              result.protocol.generalProtocol.lifestyle.forEach(rec => {
+              for (const rec of toArray<string>(result.protocol.generalProtocol.lifestyle)) {
                 lines.push(`- ${rec}`);
-              });
+              }
               lines.push("");
             }
 
@@ -644,16 +558,16 @@ export async function POST(req: Request) {
               lines.push("");
 
               lines.push("**Strategies:**");
-              result.protocol.hormonalOptimization.strategies.forEach(strategy => {
+              for (const strategy of toArray<string>(result.protocol.hormonalOptimization.strategies)) {
                 lines.push(`- ${strategy}`);
-              });
+              }
               lines.push("");
 
               if (result.protocol.hormonalOptimization.supplements.length > 0) {
                 lines.push("**Supplements:**");
-                result.protocol.hormonalOptimization.supplements.forEach(supp => {
+                for (const supp of toArray<Record<string, any>>(result.protocol.hormonalOptimization.supplements)) {
                   lines.push(`- **${supp.name}:** ${supp.dosage} - ${supp.timing} (${supp.purpose})`);
-                });
+                }
                 lines.push("");
               }
             }
@@ -664,9 +578,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💡 Tips");
               lines.push("");
-              result.protocol.tips.forEach(tip => {
+              for (const tip of toArray<string>(result.protocol.tips)) {
                 lines.push(`- ${tip}`);
-              });
+              }
               lines.push("");
             }
 
@@ -676,9 +590,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### ⚠️ Important Warnings");
               lines.push("");
-              result.protocol.warnings.forEach(warning => {
+              for (const warning of toArray<string>(result.protocol.warnings)) {
                 lines.push(`- ${warning}`);
-              });
+              }
               lines.push("");
             }
           } else if (tool.name === "fastingPlanner") {
@@ -731,14 +645,14 @@ export async function POST(req: Request) {
             lines.push(`**Timing:** ${result.breakingFast.timing}`);
             lines.push("");
             lines.push("**Recommended Foods:**");
-            result.breakingFast.foods.forEach(food => {
+            for (const food of toArray<string>(result.breakingFast.foods)) {
               lines.push(`- ${food}`);
-            });
+            }
             lines.push("");
             lines.push("**Avoid:**");
-            result.breakingFast.avoid.forEach(item => {
+            for (const item of toArray<string>(result.breakingFast.avoid)) {
               lines.push(`- ${item}`);
-            });
+            }
             lines.push("");
             lines.push(`*${result.breakingFast.notes}*`);
             lines.push("");
@@ -748,25 +662,28 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 🥗 Meal Suggestions");
               lines.push("");
-              if (result.mealSuggestions.meal1) {
+              const meal1 = toArray<string>(result.mealSuggestions.meal1);
+              if (meal1.length) {
                 lines.push("**Meal 1:**");
-                result.mealSuggestions.meal1.forEach(suggestion => {
+                for (const suggestion of meal1) {
                   lines.push(`- ${suggestion}`);
-                });
+                }
                 lines.push("");
               }
-              if (result.mealSuggestions.meal2) {
+              const meal2 = toArray<string>(result.mealSuggestions.meal2);
+              if (meal2.length) {
                 lines.push("**Meal 2:**");
-                result.mealSuggestions.meal2.forEach(suggestion => {
+                for (const suggestion of meal2) {
                   lines.push(`- ${suggestion}`);
-                });
+                }
                 lines.push("");
               }
-              if (result.mealSuggestions.meal3) {
+              const meal3 = toArray<string>(result.mealSuggestions.meal3);
+              if (meal3.length) {
                 lines.push("**Meal 3:**");
-                result.mealSuggestions.meal3.forEach(suggestion => {
+                for (const suggestion of meal3) {
                   lines.push(`- ${suggestion}`);
-                });
+                }
                 lines.push("");
               }
             }
@@ -776,9 +693,9 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💡 Tips for Success");
               lines.push("");
-              result.tips.forEach(tip => {
+              for (const tip of toArray<string>(result.tips)) {
                 lines.push(`- ${tip}`);
-              });
+              }
               lines.push("");
             }
           } else if (tool.name === "coldHotTherapy") {
@@ -803,7 +720,7 @@ export async function POST(req: Request) {
               lines.push(`- Week 4: ${result.coldPlunge.progression.week4}`);
               lines.push("");
               lines.push("**Safety Guidelines:**");
-              result.coldPlunge.safety.forEach(safety => {
+              forEachItem<string>(result.coldPlunge.safety, (safety) => {
                 lines.push(`- ${safety}`);
               });
               lines.push("");
@@ -823,7 +740,7 @@ export async function POST(req: Request) {
               lines.push(`**Hydration:** ${result.sauna.hydration}`);
               lines.push("");
               lines.push("**Safety Guidelines:**");
-              result.sauna.safety.forEach(safety => {
+              forEachItem<string>(result.sauna.safety, (safety) => {
                 lines.push(`- ${safety}`);
               });
               lines.push("");
@@ -838,14 +755,17 @@ export async function POST(req: Request) {
               lines.push(result.contrast.description);
               lines.push("");
               lines.push("**Sequence:**");
-              result.contrast.sequence.forEach((step, idx) => {
+              const contrastSequence = Array.isArray(result.contrast.sequence)
+                ? (result.contrast.sequence as Array<Record<string, any>>)
+                : [];
+              contrastSequence.forEach((step, idx) => {
                 lines.push(`${idx + 1}. **${step.step}** - ${step.duration} at ${step.temperature}`);
               });
               lines.push("");
               lines.push(`**Frequency:** ${result.contrast.frequency}`);
               lines.push("");
               lines.push("**Benefits:**");
-              result.contrast.benefits.forEach(benefit => {
+              forEachItem<string>(result.contrast.benefits, (benefit) => {
                 lines.push(`- ${benefit}`);
               });
               lines.push("");
@@ -856,7 +776,7 @@ export async function POST(req: Request) {
             if (result.timingRecommendations && result.timingRecommendations.length > 0) {
               lines.push("### ⏰ Timing Recommendations");
               lines.push("");
-              result.timingRecommendations.forEach(rec => {
+              forEachItem<string>(result.timingRecommendations, (rec) => {
                 lines.push(`- ${rec}`);
               });
               lines.push("");
@@ -867,7 +787,7 @@ export async function POST(req: Request) {
             if (result.tips && result.tips.length > 0) {
               lines.push("### 💡 Tips for Success");
               lines.push("");
-              result.tips.forEach(tip => {
+              forEachItem<string>(result.tips, (tip) => {
                 lines.push(`- ${tip}`);
               });
               lines.push("");
@@ -880,12 +800,13 @@ export async function POST(req: Request) {
             if (result.breathingExercises && result.breathingExercises.length > 0) {
               lines.push("### 🌬️ Breathing Exercises");
               lines.push("");
-              result.breathingExercises.forEach((exercise, idx) => {
+              const breathingExercises = result.breathingExercises as Array<Record<string, any>>;
+              breathingExercises.forEach((exercise, idx) => {
                 lines.push(`#### ${idx + 1}. ${exercise.name}`);
                 lines.push(exercise.description);
                 lines.push("");
                 lines.push("**Steps:**");
-                exercise.steps.forEach(step => {
+                forEachItem<string>(exercise.steps, (step) => {
                   lines.push(`- ${step}`);
                 });
                 lines.push("");
@@ -893,13 +814,13 @@ export async function POST(req: Request) {
                 lines.push(`**Frequency:** ${exercise.frequency}`);
                 lines.push("");
                 lines.push("**Benefits:**");
-                exercise.benefits.forEach(benefit => {
+                forEachItem<string>(exercise.benefits, (benefit) => {
                   lines.push(`- ${benefit}`);
                 });
                 lines.push("");
                 lines.push(`**When to Use:** ${exercise.whenToUse}`);
                 lines.push("");
-                if (idx < result.breathingExercises.length - 1) {
+                if (idx < breathingExercises.length - 1) {
                   lines.push("---");
                   lines.push("");
                 }
@@ -918,12 +839,12 @@ export async function POST(req: Request) {
               lines.push(`**Frequency:** ${result.meditation.frequency}`);
               lines.push("");
               lines.push("**Technique:**");
-              result.meditation.technique.forEach(step => {
+              forEachItem<string>(result.meditation.technique, (step) => {
                 lines.push(`- ${step}`);
               });
               lines.push("");
               lines.push("**Benefits:**");
-              result.meditation.benefits.forEach(benefit => {
+              forEachItem<string>(result.meditation.benefits, (benefit) => {
                 lines.push(`- ${benefit}`);
               });
               lines.push("");
@@ -938,20 +859,21 @@ export async function POST(req: Request) {
               lines.push(result.hrvProtocol.description);
               lines.push("");
               lines.push("**Exercises:**");
-              result.hrvProtocol.exercises.forEach((exercise, idx) => {
+              const hrvExercises = result.hrvProtocol.exercises as Array<Record<string, any>>;
+              hrvExercises.forEach((exercise, idx) => {
                 lines.push(`**${idx + 1}. ${exercise.name}** (${exercise.duration})`);
-                exercise.instructions.forEach(instruction => {
+                forEachItem<string>(exercise.instructions, (instruction) => {
                   lines.push(`- ${instruction}`);
                 });
                 lines.push("");
               });
               lines.push("**Tracking:**");
-              result.hrvProtocol.tracking.forEach(item => {
+              forEachItem<string>(result.hrvProtocol.tracking, (item) => {
                 lines.push(`- ${item}`);
               });
               lines.push("");
               lines.push("**Goals:**");
-              result.hrvProtocol.goals.forEach(goal => {
+              forEachItem<string>(result.hrvProtocol.goals, (goal) => {
                 lines.push(`- ${goal}`);
               });
               lines.push("");
@@ -962,7 +884,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💊 Adaptogen Recommendations");
               lines.push("");
-              result.adaptogens.forEach((adaptogen, idx) => {
+              forEachItem<Record<string, any>>(result.adaptogens, (adaptogen, idx) => {
                 lines.push(`**${idx + 1}. ${adaptogen.name}**`);
                 lines.push(`- **Dosage:** ${adaptogen.dosage}`);
                 lines.push(`- **Timing:** ${adaptogen.timing}`);
@@ -979,7 +901,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💚 Lifestyle Recommendations");
               lines.push("");
-              result.lifestyleRecommendations.forEach(rec => {
+              forEachItem<string>(result.lifestyleRecommendations, (rec) => {
                 lines.push(`- ${rec}`);
               });
               lines.push("");
@@ -990,7 +912,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 📅 Suggested Daily Routine");
               lines.push("");
-              result.dailyRoutine.forEach(item => {
+              forEachItem<string>(result.dailyRoutine, (item) => {
                 lines.push(`- ${item}`);
               });
               lines.push("");
@@ -1001,7 +923,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💡 Tips for Success");
               lines.push("");
-              result.tips.forEach(tip => {
+              forEachItem<string>(result.tips, (tip) => {
                 lines.push(`- ${tip}`);
               });
               lines.push("");
@@ -1039,7 +961,7 @@ export async function POST(req: Request) {
             lines.push("");
             lines.push("### 🍽️ Meal Distribution");
             lines.push("");
-            result.mealDistribution.forEach((meal, idx) => {
+            forEachItem<Record<string, any>>(result.mealDistribution, (meal, idx) => {
               lines.push(`**${meal.meal}**${meal.timing ? ` (${meal.timing})` : ""}`);
               lines.push(`- Calories: ${meal.calories} kcal`);
               lines.push(`- Protein: ${meal.protein}g`);
@@ -1053,7 +975,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💡 Tips for Success");
               lines.push("");
-              result.tips.forEach(tip => {
+              forEachItem<string>(result.tips, (tip) => {
                 lines.push(`- ${tip}`);
               });
               lines.push("");
@@ -1072,19 +994,20 @@ export async function POST(req: Request) {
             if (result.protocols && result.protocols.length > 0) {
               lines.push("### 📋 Recovery Protocols");
               lines.push("");
-              result.protocols.forEach((protocol, idx) => {
+              const recoveryProtocols = result.protocols as Array<Record<string, any>>;
+              recoveryProtocols.forEach((protocol, idx) => {
                 lines.push(`#### ${idx + 1}. ${protocol.name}`);
                 lines.push(protocol.description);
                 lines.push(`**Duration:** ${protocol.duration}`);
                 lines.push("");
-                protocol.steps.forEach(step => {
+                forEachItem<Record<string, any>>(protocol.steps, (step) => {
                   lines.push(`**${step.time} - ${step.action}**`);
-                  step.details.forEach(detail => {
+                  forEachItem<string>(step.details, (detail) => {
                     lines.push(`- ${detail}`);
                   });
                   lines.push("");
                 });
-                if (idx < result.protocols.length - 1) {
+                if (idx < recoveryProtocols.length - 1) {
                   lines.push("---");
                   lines.push("");
                 }
@@ -1100,7 +1023,7 @@ export async function POST(req: Request) {
               lines.push(`**Timing:** ${result.sleepOptimization.timing}`);
               lines.push("");
               lines.push("**Recommendations:**");
-              result.sleepOptimization.recommendations.forEach(rec => {
+              forEachItem<string>(result.sleepOptimization.recommendations, (rec) => {
                 lines.push(`- ${rec}`);
               });
               lines.push("");
@@ -1111,7 +1034,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💊 Recovery Supplements");
               lines.push("");
-              result.supplements.forEach((supp, idx) => {
+              forEachItem<Record<string, any>>(result.supplements, (supp, idx) => {
                 lines.push(`**${idx + 1}. ${supp.name}**`);
                 lines.push(`- **Dosage:** ${supp.dosage}`);
                 lines.push(`- **Timing:** ${supp.timing}`);
@@ -1128,12 +1051,13 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 🚶 Active Recovery Activities");
               lines.push("");
-              result.activeRecovery.activities.forEach((activity, idx) => {
+              const activities = result.activeRecovery.activities as Array<Record<string, any>>;
+              activities.forEach((activity, idx) => {
                 lines.push(`**${idx + 1}. ${activity.name}**`);
                 lines.push(`- **Duration:** ${activity.duration}`);
                 lines.push(`- **Intensity:** ${activity.intensity}`);
                 lines.push("**Benefits:**");
-                activity.benefits.forEach(benefit => {
+                forEachItem<string>(activity.benefits, (benefit) => {
                   lines.push(`- ${benefit}`);
                 });
                 lines.push("");
@@ -1145,7 +1069,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 🍽️ Nutrition Timing Recommendations");
               lines.push("");
-              result.nutritionTiming.forEach(rec => {
+              forEachItem<string>(result.nutritionTiming, (rec) => {
                 lines.push(`- ${rec}`);
               });
               lines.push("");
@@ -1156,7 +1080,7 @@ export async function POST(req: Request) {
               lines.push("");
               lines.push("### 💡 Recovery Tips");
               lines.push("");
-              result.tips.forEach(tip => {
+              forEachItem<string>(result.tips, (tip) => {
                 lines.push(`- ${tip}`);
               });
               lines.push("");
@@ -1207,10 +1131,10 @@ export async function POST(req: Request) {
             streamHandler: async (send) => {
               send({ type: "meta", sessionId: sessionIdForHistory });
               await streamTextChunks(toolText, send);
-              await persistHistory({
+              await persistChatHistory({
                 userId,
                 sessionId: sessionIdForHistory,
-                requestMessages: messages,
+                requestMessages: conversationMessages,
                 assistantContent: toolText,
                 provider: `tool:${tool.name}`,
               });
@@ -1241,65 +1165,16 @@ export async function POST(req: Request) {
       }
     }
 
-    // Load user profile for context
-    let userProfile: { goals?: Record<string, unknown>; main_struggles?: string[]; preferences?: Record<string, unknown> } | null = null;
-    let userDbId: string | null = null;
-    try {
-      const userRecord = await queryOne<{ id: string; goals?: Record<string, unknown>; main_struggles?: string[] }>(
-        "SELECT id, goals, main_struggles FROM users WHERE clerk_user_id = $1",
-        [userId]
-      );
-      if (userRecord) {
-        userDbId = userRecord.id;
-        // Ensure main_struggles is always an array (it might be stored as JSONB object or string)
-        const struggles = userRecord.main_struggles;
-        const strugglesArray = Array.isArray(struggles) 
-          ? struggles 
-          : typeof struggles === "string" 
-            ? JSON.parse(struggles || "[]")
-            : struggles && typeof struggles === "object"
-              ? Object.values(struggles)
-              : [];
-        
-        userProfile = {
-          goals: userRecord.goals || {},
-          main_struggles: strugglesArray,
-        };
-      }
-    } catch (dbError) {
-      logger.debug("Chat API: Failed to load user profile", { error: dbError, userId, requestId });
-    }
-
-    // Generate pseudonymous AI user ID for analytics
-    const aiUserId = getAiUserId(userId, ip);
-
-    // Step 1: Classify request (V2 Pipeline)
-    const classification = await classifyRequest(userContent);
-    logger.debug("Chat API: Request classified", {
+    const classificationOutcome = await classifyAndHandleTriage({
+      latestUserMessage: userContent,
       userId,
-      classification,
-      requestId,
+      ip,
+      sessionId: sessionIdForHistory,
     });
+    aiUserId = classificationOutcome.aiUserId;
+    const { classification, triageMessage } = classificationOutcome;
 
-    // Step 2: Pre-answer safety gate
-    if (!classification.allow_answer) {
-      const triageMessage = buildTriageForBlocked(
-        classification.topic,
-        classification.risk
-      );
-
-      // Log triage event
-      await logAnalyticsEvent({
-        aiUserId,
-        eventType: "chat_triage",
-        sessionId: sessionIdForHistory,
-        topic: classification.topic,
-        risk: classification.risk,
-        complexity: classification.complexity,
-        success: false,
-        metadata: { reason: "allow_answer=false" },
-      }).catch(() => {}); // Don't block on analytics
-
+    if (triageMessage) {
       return createStreamResponse({
         requestId,
         headers: responseHeaders,
@@ -1311,129 +1186,21 @@ export async function POST(req: Request) {
       });
     }
 
-    // Step 3: Build RAG context (combine all sources)
-    let combinedRagContext = "";
-    let ragSources: { id: number; title: string | null; similarity: number }[] = [];
-
-    // Detect sleep mode (from domain parameter or query content)
-    const sleepMode = domain === "sleep" || isSleepQuery(userContent);
-
-    // Retrieve sleep context (Matthew Walker content) if in sleep mode
-    let sleepContext = "";
-    if (sleepMode) {
-      try {
-        const sleepDocs = await getSleepContext(userContent, 8);
-        if (sleepDocs.length > 0) {
-          sleepContext = formatSleepContext(sleepDocs);
-          ragSources.push(...sleepDocs.map(d => ({ id: typeof d.id === "number" ? d.id : parseInt(String(d.id || 0), 10), title: d.title || null, similarity: d.similarity })));
-          logger.debug("Chat API: Sleep context retrieved", {
-            userId,
-            docCount: sleepDocs.length,
-            requestId,
-          });
-        }
-      } catch (sleepError) {
-        logger.warn("Chat API: Sleep context retrieval failed", { error: sleepError, userId, requestId });
-      }
-    }
-
-    // Retrieve longevity knowledge base documents (only if not in sleep mode)
-    let longevityKnowledge = "";
-    if (!sleepMode && classification.needs_rag) {
-      try {
-        const longevityDocs = await getRelevantLongevityDocs(userContent, {
-          limit: 8,
-        });
-        if (longevityDocs.length > 0) {
-          longevityKnowledge = formatLongevityKnowledgeSnippets(longevityDocs);
-          ragSources.push(...longevityDocs.map(d => ({ id: typeof d.id === "number" ? d.id : parseInt(String(d.id || 0), 10), title: d.title || null, similarity: d.similarity })));
-          logger.debug("Chat API: Longevity knowledge retrieved", {
-            userId,
-            docCount: longevityDocs.length,
-            requestId,
-          });
-        }
-      } catch (longevityError) {
-        logger.warn("Chat API: Longevity knowledge retrieval failed", { error: longevityError, userId, requestId });
-      }
-    }
-
-    // Retrieve general RAG context if needed
-    let generalRagContext = "";
-    if (classification.needs_rag && !sleepContext && !longevityKnowledge) {
-      try {
-        const ragResult = await buildRagContext(
-          userContent,
-          userDbId,
-          6
-        );
-        generalRagContext = ragResult.context;
-        ragSources.push(...ragResult.sources);
-        logger.debug("Chat API: General RAG context retrieved", {
-          userId,
-          contextLength: generalRagContext.length,
-          requestId,
-        });
-      } catch (ragError) {
-        logger.warn("Chat API: RAG retrieval failed", { error: ragError, userId, requestId });
-      }
-    }
-
-    // Combine all RAG contexts (prioritize sleep > longevity > general)
-    combinedRagContext = sleepContext || longevityKnowledge || generalRagContext || "";
-
-    // Step 4: Choose models
-    const modelChoice = chooseModels(classification);
-
-    // Step 5: Build system prompt with RAG context
-    const systemPrompt = buildSystemPrompt(combinedRagContext);
-
-    // Step 6: Prepare messages for LLM
-    const normalizedMessages = messages
-      .slice(-20)
-      .map((m) => ({
-        role: m.role === "assistant" ? "assistant" as const : "user" as const,
-        content: m.content,
-      }));
-
-    const llmMessages = [
-      { role: "system" as const, content: systemPrompt },
-      ...normalizedMessages,
-    ];
-
-    // Get protocol status for context
-    let protocolStatus = undefined;
-    if (userDbId) {
-      try {
-        const { getProtocolStatusSummary } = await import("@/lib/utils/protocol-context");
-        protocolStatus = await getProtocolStatusSummary(userDbId);
-      } catch (protocolError) {
-        logger.debug("Chat API: Failed to load protocol status", { error: protocolError, userId, requestId });
-      }
-    }
-
-    // Build user context string for prompt
-    const userContextString = userProfile
-      ? `Goals: ${JSON.stringify(userProfile.goals || {})}\nMain struggles: ${Array.isArray(userProfile.main_struggles) ? userProfile.main_struggles.join(", ") : JSON.stringify(userProfile.main_struggles || [])}`
-      : "No profile data available";
-
-    const protocolContextString = protocolStatus || "No active protocols";
-
-    // Add user context to the last user message
-    const enhancedMessages = [...llmMessages];
-    if (enhancedMessages.length > 1 && enhancedMessages[enhancedMessages.length - 1].role === "user") {
-      enhancedMessages[enhancedMessages.length - 1] = {
-        role: "user",
-        content: `[USER_CONTEXT]
-${userContextString}
-
-[PROTOCOL_STATUS]
-${protocolContextString}
-
-[USER_MESSAGE]
-${enhancedMessages[enhancedMessages.length - 1].content}`,
-      };
-    }
+    const pipeline = await prepareChatPipeline({
+      userId,
+      userMessage: userContent,
+      classification,
+      conversationMessages,
+      domain,
+    });
+    const {
+      ragContext: combinedRagContext,
+      ragSources,
+      userDbId,
+      modelChoice,
+      enhancedMessages,
+      systemPrompt,
+    } = pipeline;
 
     return createStreamResponse({
       requestId,
@@ -1455,11 +1222,14 @@ ${enhancedMessages[enhancedMessages.length - 1].content}`,
           
           // Use streaming model for real-time token delivery
           try {
-            await streamModel({
+            const nonSystemMessages = enhancedMessages.filter(
+              (m): m is { role: "user" | "assistant"; content: string } =>
+                m.role === "user" || m.role === "assistant"
+            );
+            await streamWithFallback({
               provider: "openai",
-              model: modelChoice.mainModel,
               system: systemPrompt,
-              messages: enhancedMessages.filter(m => m.role !== "system"),
+              messages: nonSystemMessages,
               timeout: 30000,
               maxTokens: 2000,
               onToken,
@@ -1552,7 +1322,7 @@ ${enhancedMessages[enhancedMessages.length - 1].content}`,
             modelUsed: modelChoice.mainModel,
             usedJudge: modelChoice.useJudge,
             judgeVerdict,
-            messagesInSession: messages.length,
+            messagesInSession: conversationMessages.length,
             answerLength: finalAnswer.length,
             ragDocsCount: ragSources.length,
             ragSources: ragSources.length > 0 ? ragSources : undefined,
@@ -1560,10 +1330,10 @@ ${enhancedMessages[enhancedMessages.length - 1].content}`,
           }).catch(() => {}); // Don't block on analytics
 
           // Persist history
-          await persistHistory({
+          await persistChatHistory({
             userId,
             sessionId: sessionIdForHistory,
-            requestMessages: messages,
+            requestMessages: conversationMessages,
             assistantContent: finalAnswer,
             provider: modelChoice.mainModel,
           });
@@ -1571,7 +1341,7 @@ ${enhancedMessages[enhancedMessages.length - 1].content}`,
           const latency = Date.now() - startTime;
           logger.info("Chat API: Request completed", {
             userId,
-            messageCount: messages.length,
+            messageCount: conversationMessages.length,
             requestId,
             latency,
             modelUsed: modelChoice.mainModel,
@@ -1667,241 +1437,5 @@ ${enhancedMessages[enhancedMessages.length - 1].content}`,
       : "An error occurred. Please try again.";
     
     return createErrorResponse(errorMessage, requestId, 500);
-  }
-}
-
-type SendFn = (payload: Record<string, unknown>) => void;
-
-function createStreamResponse({
-  requestId,
-  headers,
-  streamHandler,
-  abortSignal,
-}: {
-  requestId: string;
-  headers: Record<string, string>;
-  streamHandler: (send: SendFn) => Promise<void>;
-  abortSignal?: AbortSignal;
-}) {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    start(controller) {
-      // Handle abort signal
-      if (abortSignal) {
-        abortSignal.addEventListener("abort", () => {
-          try {
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  requestId,
-                  type: "error",
-                  error: "ERROR_USER_ABORTED_REQUEST",
-                  details: {
-                    title: "User aborted request.",
-                    detail: "Tool call ended before result was received",
-                    isRetryable: false,
-                  },
-                  isExpected: true,
-                }) + "\n"
-              )
-            );
-            controller.close();
-          } catch (e) {
-            // Stream may already be closed
-          }
-        });
-      }
-
-      const send: SendFn = (payload) => {
-        // Check if aborted before sending
-        if (abortSignal?.aborted) {
-          controller.close();
-          return;
-        }
-        try {
-          controller.enqueue(encoder.encode(JSON.stringify({ requestId, ...payload }) + "\n"));
-        } catch (e) {
-          // Stream may be closed
-        }
-      };
-
-      streamHandler(send)
-        .then(() => {
-          if (!abortSignal?.aborted) {
-            controller.close();
-          }
-        })
-        .catch((error) => {
-          if (abortSignal?.aborted) {
-            // Request was aborted, don't send error
-            controller.close();
-            return;
-          }
-          const message = error instanceof Error ? error.message : "Unknown error";
-          try {
-            send({ type: "error", error: message });
-            controller.close();
-          } catch (e) {
-            // Stream may already be closed
-          }
-        });
-    },
-    cancel() {
-      // Stream was cancelled (e.g., client disconnected)
-      logger.debug("Stream cancelled", { requestId });
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      ...headers,
-      "Content-Type": "application/x-ndjson",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
-}
-
-async function streamTextChunks(text: string, send: SendFn) {
-  const chunkSize = 120;
-  for (let i = 0; i < text.length; i += chunkSize) {
-    const chunk = text.slice(i, i + chunkSize);
-    if (chunk) {
-      send({ type: "token", value: chunk });
-    }
-    await delay(20);
-  }
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function persistHistory({
-  userId,
-  sessionId,
-  requestMessages,
-  assistantContent,
-  provider,
-}: {
-  userId: string | null;
-  sessionId: string;
-  requestMessages: Array<{ role: string; content: string }>;
-  assistantContent: string;
-  provider: string;
-}) {
-  try {
-    const { query, queryOne } = await import("@/lib/db/client");
-    
-    // Ensure user exists in database
-    let userRecord = await queryOne<{ id: string }>(
-      "SELECT id FROM users WHERE clerk_user_id = $1",
-      [userId || ""]
-    );
-    
-    if (!userRecord && userId) {
-      // Create user if they don't exist
-      try {
-        const result = await query<{ id: string }>(
-          "INSERT INTO users (clerk_user_id) VALUES ($1) RETURNING id",
-          [userId]
-        );
-        userRecord = result[0];
-        logger.info("Created user record for chat history", { userId, userDbId: userRecord.id });
-      } catch (createError) {
-        logger.warn("Failed to create user record for chat history", { error: createError, userId });
-        return; // Can't save history without user record
-      }
-    }
-    
-    if (!userRecord) {
-      logger.debug("No user record available for chat history", { userId });
-      return;
-    }
-
-    // Save messages - check if they already exist to avoid duplicates
-    // Use a simple approach: check if message with same content exists in thread within last minute
-    for (const msg of [...requestMessages, { role: "assistant" as const, content: assistantContent }]) {
-      try {
-        // Check if this exact message already exists in this thread (within last 5 minutes to avoid duplicates)
-        const existing = await queryOne<{ id: string }>(
-          `SELECT id FROM chat_messages 
-           WHERE user_id = $1 AND thread_id = $2 AND role = $3 AND content = $4 
-           AND created_at > NOW() - INTERVAL '5 minutes'`,
-          [userRecord.id, sessionId, msg.role, msg.content]
-        );
-        
-        if (!existing) {
-          await query(
-            `INSERT INTO chat_messages (user_id, thread_id, role, content, metadata)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [
-              userRecord.id,
-              sessionId,
-              msg.role,
-              msg.content,
-              JSON.stringify({ provider }),
-            ]
-          );
-        }
-      } catch (msgError) {
-        logger.debug("Failed to save individual message", { error: msgError, userId });
-        // Continue with next message
-      }
-    }
-    
-    logger.debug("Chat history persisted", { userId, sessionId, messageCount: requestMessages.length + 1 });
-  } catch (error) {
-    logger.debug("Chat history save skipped", { error, userId });
-  }
-}
-
-async function streamWithFallback({
-  provider,
-  system,
-  messages,
-  timeout,
-  maxTokens,
-  onToken,
-}: {
-  provider: "anthropic" | "openai";
-  system: string;
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
-  timeout: number;
-  maxTokens: number;
-  onToken: (token: string) => void;
-}): Promise<"anthropic" | "openai"> {
-  let currentProvider = provider;
-  try {
-    await streamModel({
-      provider: currentProvider,
-      system,
-      messages,
-      timeout,
-      maxTokens,
-      onToken,
-    });
-    return currentProvider;
-  } catch (error) {
-    if (
-      currentProvider === "openai" &&
-      process.env.ANTHROPIC_API_KEY &&
-      error instanceof ModelError
-    ) {
-      logger.warn("OpenAI streaming failed, falling back to Anthropic", {
-        error: error.message,
-      });
-      currentProvider = "anthropic";
-      await streamModel({
-        provider: currentProvider,
-        system,
-        messages,
-        timeout,
-        maxTokens,
-        onToken,
-      });
-      return currentProvider;
-    }
-    throw error;
   }
 }

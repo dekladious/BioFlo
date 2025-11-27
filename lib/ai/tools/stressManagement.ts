@@ -55,7 +55,7 @@ export const stressManagement = registerTool({
     }).default({}),
     goals: z.array(z.enum(["reduce_stress", "improve_sleep", "enhance_focus", "manage_anxiety", "improve_hrv", "cortisol_optimization"])).default(["reduce_stress"]),
   }),
-  async handler({ stressLevel, stressSources, timeAvailable, preferences, goals }) {
+  async handler({ stressLevel, stressSources, timeAvailable, preferences, goals }, _context) {
     // Breathing Exercises
     const breathingExercises: BreathingExercise[] = [];
 

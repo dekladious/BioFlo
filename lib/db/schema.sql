@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_status TEXT CHECK (subscription_status IN ('none', 'active', 'past_due', 'canceled')),
   goals JSONB DEFAULT '{}', -- Structured from onboarding
   main_struggles JSONB DEFAULT '{}', -- Main struggles from onboarding
+  today_mode TEXT NOT NULL DEFAULT 'NORMAL' CHECK (today_mode IN ('NORMAL', 'RECOVERY', 'TRAVEL', 'DEEP_WORK', 'RESET', 'GROWTH')),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -43,6 +44,18 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   biohacking_experience TEXT, -- 'beginner', 'intermediate', 'advanced'
   check_in_reminder_enabled BOOLEAN DEFAULT TRUE, -- Enable daily check-in reminders
   check_in_reminder_time TIME DEFAULT '20:00', -- Default reminder time (8 PM)
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Women's health profiles (cycle tracking & context)
+CREATE TABLE IF NOT EXISTS womens_health_profiles (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  cycle_length INTEGER CHECK (cycle_length BETWEEN 21 AND 40),
+  current_phase TEXT CHECK (current_phase IN ('menstrual', 'follicular', 'ovulatory', 'luteal', 'perimenopause', 'menopause')),
+  day_of_cycle INTEGER,
+  issues TEXT[] DEFAULT '{}',
+  notes TEXT,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -147,6 +160,46 @@ CREATE TABLE IF NOT EXISTS check_ins (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Custom experiments / interventions
+CREATE TABLE IF NOT EXISTS user_experiments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  experiment_type TEXT,
+  hypothesis TEXT,
+  success_criteria TEXT,
+  tracked_metrics TEXT[] DEFAULT '{}',
+  min_duration_days INTEGER CHECK (min_duration_days >= 1) DEFAULT 7,
+  start_date DATE,
+  end_date DATE,
+  status TEXT CHECK (status IN ('draft','scheduled','active','completed','aborted')) DEFAULT 'draft',
+  created_by_ai BOOLEAN DEFAULT FALSE,
+  metadata JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_experiment_windows (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  experiment_id UUID REFERENCES user_experiments(id) ON DELETE CASCADE NOT NULL,
+  phase TEXT CHECK (phase IN ('pre','during','post')) NOT NULL,
+  metrics JSONB NOT NULL,
+  generated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(experiment_id, phase)
+);
+
+CREATE TABLE IF NOT EXISTS user_experiment_feedback (
+  experiment_id UUID PRIMARY KEY REFERENCES user_experiments(id) ON DELETE CASCADE,
+  system_label TEXT CHECK (system_label IN ('promising','neutral','not_helpful')) DEFAULT 'neutral',
+  user_label TEXT CHECK (user_label IN ('success','neutral','failure')),
+  user_notes TEXT,
+  ai_summary TEXT,
+  ai_summary_generated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Protocols (available protocol templates)
 CREATE TABLE IF NOT EXISTS protocols (
   id BIGSERIAL PRIMARY KEY,
@@ -209,11 +262,23 @@ CREATE TABLE IF NOT EXISTS garmin_tokens (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Ultrahuman tokens (Ring AIR / M1 CGM)
+CREATE TABLE IF NOT EXISTS ultrahuman_tokens (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT,
+  expires_at TIMESTAMPTZ,
+  scopes TEXT[],
+  ultrahuman_user_id TEXT, -- Ultrahuman's user ID
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Raw wearable data tables (one per domain)
 CREATE TABLE IF NOT EXISTS wearable_raw_sleep (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('oura', 'whoop', 'garmin', 'apple', 'google')),
+  source TEXT NOT NULL CHECK (source IN ('oura', 'whoop', 'garmin', 'apple', 'google', 'ultrahuman')),
   provider_id TEXT, -- Their record ID
   start_time TIMESTAMPTZ NOT NULL,
   end_time TIMESTAMPTZ NOT NULL,
@@ -224,7 +289,7 @@ CREATE TABLE IF NOT EXISTS wearable_raw_sleep (
 CREATE TABLE IF NOT EXISTS wearable_raw_activity (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('oura', 'whoop', 'garmin', 'apple', 'google')),
+  source TEXT NOT NULL CHECK (source IN ('oura', 'whoop', 'garmin', 'apple', 'google', 'ultrahuman')),
   provider_id TEXT,
   date DATE NOT NULL,
   raw JSONB NOT NULL,
@@ -234,7 +299,7 @@ CREATE TABLE IF NOT EXISTS wearable_raw_activity (
 CREATE TABLE IF NOT EXISTS wearable_raw_hr (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('oura', 'whoop', 'garmin', 'apple', 'google')),
+  source TEXT NOT NULL CHECK (source IN ('oura', 'whoop', 'garmin', 'apple', 'google', 'ultrahuman')),
   provider_id TEXT,
   timestamp TIMESTAMPTZ NOT NULL,
   raw JSONB NOT NULL,
@@ -313,6 +378,10 @@ CREATE INDEX IF NOT EXISTS idx_check_ins_user_id ON check_ins(user_id);
 CREATE INDEX IF NOT EXISTS idx_check_ins_created_at ON check_ins(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_check_ins_user_created ON check_ins(user_id, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_user_experiments_user_id ON user_experiments(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_experiments_status ON user_experiments(status);
+CREATE INDEX IF NOT EXISTS idx_user_experiment_windows_experiment_id ON user_experiment_windows(experiment_id);
+
 CREATE INDEX IF NOT EXISTS idx_protocol_runs_user_id ON protocol_runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_protocol_runs_status ON protocol_runs(status);
 CREATE INDEX IF NOT EXISTS idx_protocol_runs_user_status ON protocol_runs(user_id, status);
@@ -354,28 +423,52 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Triggers for updated_at
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_preferences_updated_at ON user_preferences;
 CREATE TRIGGER update_user_preferences_updated_at BEFORE UPDATE ON user_preferences
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_womens_health_profiles_updated_at ON womens_health_profiles;
+CREATE TRIGGER update_womens_health_profiles_updated_at BEFORE UPDATE ON womens_health_profiles
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_health_metrics_updated_at ON health_metrics;
 CREATE TRIGGER update_health_metrics_updated_at BEFORE UPDATE ON health_metrics
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_wearable_devices_updated_at ON wearable_devices;
 CREATE TRIGGER update_wearable_devices_updated_at BEFORE UPDATE ON wearable_devices
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_documents_updated_at ON documents;
 CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_experiments_updated_at ON user_experiments;
+CREATE TRIGGER update_user_experiments_updated_at BEFORE UPDATE ON user_experiments
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_user_experiment_feedback_updated_at ON user_experiment_feedback;
+CREATE TRIGGER update_user_experiment_feedback_updated_at BEFORE UPDATE ON user_experiment_feedback
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_oura_tokens_updated_at ON oura_tokens;
 CREATE TRIGGER update_oura_tokens_updated_at BEFORE UPDATE ON oura_tokens
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_whoop_tokens_updated_at ON whoop_tokens;
 CREATE TRIGGER update_whoop_tokens_updated_at BEFORE UPDATE ON whoop_tokens
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_garmin_tokens_updated_at ON garmin_tokens;
 CREATE TRIGGER update_garmin_tokens_updated_at BEFORE UPDATE ON garmin_tokens
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_ultrahuman_tokens_updated_at ON ultrahuman_tokens;
+CREATE TRIGGER update_ultrahuman_tokens_updated_at BEFORE UPDATE ON ultrahuman_tokens
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Care Mode (elderly/family monitoring)
@@ -414,6 +507,7 @@ CREATE INDEX IF NOT EXISTS idx_care_mode_check_ins_user_id ON care_mode_check_in
 CREATE INDEX IF NOT EXISTS idx_care_mode_check_ins_prompt_sent ON care_mode_check_ins(prompt_sent_at);
 CREATE INDEX IF NOT EXISTS idx_care_mode_alerts_user_id ON care_mode_alerts(user_id);
 
+DROP TRIGGER IF EXISTS update_care_mode_settings_updated_at ON care_mode_settings;
 CREATE TRIGGER update_care_mode_settings_updated_at BEFORE UPDATE ON care_mode_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 

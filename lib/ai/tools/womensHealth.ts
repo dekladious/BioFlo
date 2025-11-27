@@ -74,7 +74,7 @@ export const womensHealth = registerTool({
     age: z.number().int().min(18).max(100).optional(),
     lifeStage: z.enum(["reproductive", "perimenopause", "menopause", "postmenopause"]).optional(),
   }),
-  async handler({ goals, cycleInfo, age, lifeStage }) {
+  async handler({ goals, cycleInfo, age, lifeStage }, _context) {
     const isHormonalBalance = goals.includes("hormonal_balance");
     const isCycleOptimization = goals.includes("cycle_optimization");
     const isPCOS = goals.includes("pcos");

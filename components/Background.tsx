@@ -5,39 +5,24 @@ import React from "react";
 export default function Background() {
   return (
     <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-      {/* Base */}
-      <div className="absolute inset-0 bg-white dark:bg-[#0b1117]" />
+      {/* Base gradient - uses CSS variable which changes with theme */}
+      <div className="absolute inset-0" style={{ background: "var(--bg-hero)" }} />
 
-      {/* Fiber texture (ultra subtle diagonal) - only visible in dark mode */}
-      <div
-        className="absolute inset-0 opacity-[0.06] dark:opacity-[0.06] opacity-0
-                      bg-[repeating-linear-gradient(115deg,rgba(0,0,0,0.1)_0px,rgba(0,0,0,0.1)_1px,transparent_1px,transparent_12px)]
-                      dark:bg-[repeating-linear-gradient(115deg,rgba(255,255,255,0.7)_0px,rgba(255,255,255,0.7)_1px,transparent_1px,transparent_12px)]"
-      />
+      {/* Aurora wash - visible in dark mode, subtle in light mode */}
+      <div className="absolute inset-0 mix-blend-screen dark:opacity-70 opacity-30">
+        <div className="absolute -left-16 top-10 h-[520px] w-[520px] animate-pulse-glow rounded-full bg-[radial-gradient(circle,rgba(93,239,251,0.35),transparent_65%)] blur-3xl dark:bg-[radial-gradient(circle,rgba(93,239,251,0.35),transparent_65%)]" />
+        <div className="absolute -right-12 top-24 h-[420px] w-[420px] animate-pulse-glow rounded-full bg-[radial-gradient(circle,rgba(177,149,255,0.4),transparent_60%)] blur-3xl" />
+        <div className="absolute bottom-[-180px] left-1/2 h-[560px] w-[560px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(99,245,192,0.18),transparent_60%)] blur-3xl" />
+      </div>
 
-      {/* Dual soft hotspots (cyan/emerald) */}
-      <div
-        className="absolute inset-0
-        bg-[radial-gradient(70%_60%_at_30%_20%,rgba(56,189,248,0.05),transparent_55%),
-            radial-gradient(70%_60%_at_80%_80%,rgba(16,185,129,0.05),transparent_55%)]
-        dark:bg-[radial-gradient(70%_60%_at_30%_20%,rgba(56,189,248,0.10),transparent_55%),
-            radial-gradient(70%_60%_at_80%_80%,rgba(16,185,129,0.10),transparent_55%)]"
-      />
+      {/* Fiber texture */}
+      <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.05] bg-[repeating-linear-gradient(115deg,rgba(255,255,255,0.12)_0px,rgba(255,255,255,0.12)_1px,transparent_1px,transparent_12px)]" />
 
-      {/* Top light falloff - only in dark mode */}
-      <div className="absolute inset-0 dark:bg-[linear-gradient(to_bottom,rgba(255,255,255,0.05),transparent_35%)]" />
+      {/* Moving light streak - dark mode only */}
+      <div className="absolute -inset-[25%] opacity-0 dark:opacity-[0.08] blur-3xl bg-[conic-gradient(from_120deg_at_20%_30%,rgba(93,239,251,0.45),transparent_35%),conic-gradient(from_-40deg_at_80%_70%,rgba(177,149,255,0.45),transparent_40%)] animate-fiber-sweep" />
 
-      {/* Bottom vignette - only in dark mode */}
-      <div className="absolute inset-0 dark:bg-[radial-gradient(120%_80%_at_50%_120%,rgba(0,0,0,0.55),transparent_60%)]" />
-
-      {/* Optional: moving light streak (very subtle) */}
-      <div
-        className="absolute -inset-[20%] opacity-[0.06] dark:opacity-[0.12] blur-3xl
-           bg-[conic-gradient(from_140deg_at_20%_40%,rgba(96,165,250,0.3),transparent_35%),conic-gradient(from_-20deg_at_80%_70%,rgba(52,211,153,0.3),transparent_40%)]
-           dark:bg-[conic-gradient(from_140deg_at_20%_40%,#60a5fa,transparent_35%),conic-gradient(from_-20deg_at_80%_70%,#34d399,transparent_40%)]
-           animate-fiber-sweep"
-      />
+      {/* Vignette - different for light/dark */}
+      <div className="absolute inset-0 dark:bg-[radial-gradient(120%_80%_at_50%_120%,rgba(5,5,11,0.7),transparent_65%)] bg-[radial-gradient(120%_80%_at_50%_120%,rgba(248,250,252,0.3),transparent_65%)]" />
     </div>
   );
 }
-

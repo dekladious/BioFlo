@@ -1,21 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  Loader2,
+  AlertCircle,
+  ArrowLeft,
+  Calendar,
   CheckCircle2,
   Circle,
-  ArrowLeft,
+  Loader2,
   Play,
-  X,
+  Shield,
   Sparkles,
-  AlertCircle,
 } from "lucide-react";
 import Link from "next/link";
-import { SafetyDisclaimer } from "@/components/SafetyDisclaimer";
-
-const pane = "rounded-2xl border border-white/10 bg-white/[0.045] backdrop-blur shadow-sm";
+import { Card } from "@/components/ui/card";
+import { MetricPill } from "@/components/ui/metric-pill";
+import { RingMetric } from "@/components/ui/ring-metric";
+import { cn } from "@/lib/utils/cn";
 
 type ProtocolConfig = {
   duration: number;
@@ -63,19 +65,7 @@ export default function ProtocolDetailPage() {
   const [saving, setSaving] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
 
-  useEffect(() => {
-    fetchProtocol();
-  }, [slug]);
-
-  useEffect(() => {
-    // Load notes for selected day if active run exists
-    if (activeRun) {
-      const dayLog = activeRun.logs.find((log) => log.dayIndex === selectedDay);
-      setDayNotes(dayLog?.notes || "");
-    }
-  }, [selectedDay, activeRun]);
-
-  async function fetchProtocol() {
+  const fetchProtocol = useCallback(async () => {
     setLoading(true);
     try {
       const response = await fetch(`/api/protocols/${slug}`);
@@ -90,7 +80,6 @@ export default function ProtocolDetailPage() {
       if (data.success && data.data) {
         setProtocol(data.data.protocol);
         setActiveRun(data.data.activeRun);
-        // Set selected day to current day if active, otherwise day 1
         if (data.data.activeRun?.currentDay) {
           setSelectedDay(data.data.activeRun.currentDay);
         }
@@ -100,7 +89,19 @@ export default function ProtocolDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [router, slug]);
+
+  useEffect(() => {
+    fetchProtocol();
+  }, [fetchProtocol]);
+
+  useEffect(() => {
+    // Load notes for selected day if active run exists
+    if (activeRun) {
+      const dayLog = activeRun.logs.find((log) => log.dayIndex === selectedDay);
+      setDayNotes(dayLog?.notes || "");
+    }
+  }, [selectedDay, activeRun]);
 
   async function handleStartProtocol() {
     if (!protocol) return;
@@ -241,150 +242,152 @@ export default function ProtocolDetailPage() {
   const totalDays = config.duration || config.days?.length || 1;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link
-          href="/protocols"
-          className="rounded-lg p-2 hover:bg-white/10 transition text-slate-400 hover:text-white"
-        >
-          <ArrowLeft className="size-5" />
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-2xl font-semibold">{protocol.name}</h1>
-          {protocol.description && (
-            <p className="text-sm text-slate-400 mt-1">{protocol.description}</p>
-          )}
-        </div>
-      </div>
-
-      {/* Duration & Tags */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="px-3 py-1 rounded-full text-xs font-medium bg-sky-400/20 text-sky-300 border border-sky-400/30">
-          {totalDays} days
-        </span>
-        {config.tags?.map((tag, idx) => (
-          <span
-            key={idx}
-            className="px-3 py-1 rounded-full text-xs font-medium bg-white/5 text-slate-300 border border-white/10"
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6">
+      <Card variant="hero" statusAccent="primary" className="space-y-6">
+        <div className="flex flex-wrap items-start gap-4">
+          <Link
+            href="/protocols"
+            className="rounded-2xl border border-border-subtle px-3 py-2 text-text-soft hover:text-text-main"
           >
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      {/* Overview Section */}
-      <div className={pane + " p-6 space-y-4"}>
-        <h2 className="text-lg font-semibold">Overview</h2>
-
-        {/* What this protocol is for */}
-        <div>
-          <h3 className="text-sm font-medium text-slate-300 mb-2">What this protocol is for</h3>
-          <p className="text-sm text-slate-400 leading-relaxed">
-            {protocol.description || "A structured programme to help you achieve your health goals."}
-          </p>
+            <ArrowLeft className="size-5" />
+          </Link>
+          <div className="flex-1 space-y-2">
+            <p className="text-xs uppercase tracking-[0.4em] text-text-soft">Protocol intelligence</p>
+            <h1 className="text-3xl font-semibold text-text-main">{protocol.name}</h1>
+            {protocol.description && <p className="text-sm text-text-soft">{protocol.description}</p>}
+          </div>
         </div>
-
-        {/* What you'll be doing */}
-        {config.days && config.days.length > 0 && (
-          <div>
-            <h3 className="text-sm font-medium text-slate-300 mb-2">What you'll be doing</h3>
-            <ul className="space-y-1">
-              {config.days.slice(0, 5).map((day, idx) => (
-                <li key={idx} className="text-sm text-slate-400 flex items-start gap-2">
-                  <span className="text-sky-400 mt-1">•</span>
-                  <span>{day.title}</span>
-                </li>
-              ))}
-            </ul>
+        <div className="flex flex-wrap items-center gap-2">
+          <MetricPill label="Duration" value={`${totalDays} days`} status="neutral" />
+          {config.tags?.map((tag, idx) => (
+            <MetricPill key={idx} label={tag} value="" status="neutral" />
+          ))}
+        </div>
+        {!activeRun ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleStartProtocol}
+              disabled={saving}
+              className="inline-flex items-center gap-2 rounded-full border border-teal bg-teal-soft px-5 py-2 text-sm font-semibold text-teal hover:bg-teal/20 disabled:opacity-60"
+            >
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+              {saving ? "Starting…" : "Start this protocol"}
+            </button>
+            <Link
+              href={`/chat?message=${encodeURIComponent(`Is the ${protocol.name} protocol right for me?`)}`}
+              className="quick-action-chip border-border-subtle bg-white/5"
+            >
+              Ask coach about this
+            </Link>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-3">
+            <MetricPill
+              label="Current day"
+              value={`Day ${currentDay}/${totalDays}`}
+              status="good"
+              deltaLabel={`${Math.round((currentDay / totalDays) * 100)}%`}
+            />
+            <button
+              onClick={() => setShowStopConfirm(true)}
+              className="rounded-full border border-danger/40 bg-danger/10 px-4 py-1 text-xs font-semibold text-danger hover:bg-danger/20"
+            >
+              Stop protocol
+            </button>
           </div>
         )}
+      </Card>
 
-        {/* Safety Note */}
-        <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="size-4 text-amber-400 mt-0.5 flex-shrink-0" />
-            <p className="text-xs text-amber-300 leading-relaxed">
-              This protocol focuses on behavioural changes like light, timing, and routines. It does not replace medical advice. If you have a sleep disorder or medical condition, talk to your doctor first.
-            </p>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2 space-y-5">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-text-soft">Overview</p>
+            <h2 className="text-xl font-semibold text-text-main">What this protocol covers</h2>
           </div>
-        </div>
-
-        {/* CTA */}
-        {!activeRun ? (
-          <button
-            onClick={handleStartProtocol}
-            disabled={saving}
-            className="w-full rounded-lg bg-sky-400 px-4 py-3 text-white font-medium hover:bg-sky-500 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Starting...
-              </>
-            ) : (
-              <>
-                <Play className="size-4" />
-                Start this protocol
-              </>
-            )}
-          </button>
-        ) : (
-          <div className="space-y-3">
-            <div className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-4">
-              <p className="text-sm text-emerald-300">
-                You're currently on Day {currentDay} of {totalDays}.
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-border-subtle bg-white/5 p-4">
+              <h3 className="text-sm font-medium text-text-main mb-2">What it’s for</h3>
+              <p className="text-sm text-text-soft">
+                {protocol.description || "A structured programme to help you reach your goal with predictable pacing."}
               </p>
             </div>
-            <div className="flex gap-2">
-              <Link
-                href={`/protocols/${slug}#day-${currentDay}`}
-                className="flex-1 rounded-lg bg-sky-400 px-4 py-3 text-white font-medium hover:bg-sky-500 transition text-center"
-              >
-                Go to today's steps
-              </Link>
-              <button
-                onClick={() => setShowStopConfirm(true)}
-                className="rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm font-medium text-red-300 hover:bg-red-400/20 transition"
-              >
-                Stop protocol
-              </button>
+            <div className="rounded-2xl border border-border-subtle bg-white/5 p-4">
+              <h3 className="text-sm font-medium text-text-main mb-2">What you’ll be doing</h3>
+              <ul className="space-y-1 text-sm text-text-soft">
+                {config.days?.slice(0, 4).map((day, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <span className="text-teal mt-1">•</span>
+                    {day.title}
+                  </li>
+                )) || <li>Daily steps that adapt to your plan</li>}
+              </ul>
             </div>
           </div>
-        )}
+          <div className="rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning flex items-start gap-3">
+            <AlertCircle className="size-4 mt-0.5" />
+            Behavioural guidance only. No medication, fasting extremes, or unsupervised heat/cold therapy. Talk to your doctor
+            if you have medical questions or adverse symptoms.
+          </div>
+        </Card>
+
+        <Card className="space-y-4">
+          <p className="text-xs uppercase tracking-wide text-text-soft">Readiness snapshot</p>
+          <RingMetric value={Math.min(100, Math.round((currentDay / totalDays) * 100))} label="Progress" status="good" />
+          <div className="space-y-2 text-sm text-text-soft">
+            <p>
+              <strong className="text-text-main">Started:</strong>{" "}
+              {activeRun
+                ? new Date(activeRun.startedAt).toLocaleDateString("en-GB", {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "Not running"}
+            </p>
+            <p>
+              <strong className="text-text-main">Mode tie-in:</strong> Coach will adapt today’s plan when this run is active.
+            </p>
+          </div>
+        </Card>
       </div>
 
       {/* Stop Confirmation Modal */}
       {showStopConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className={pane + " p-6 max-w-md w-full space-y-4"}>
-            <h3 className="text-lg font-semibold">Stop protocol?</h3>
-            <p className="text-sm text-slate-400">
-              Are you sure you want to stop this protocol? Your progress will be saved, but you'll need to start over if you want to continue later.
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <Card className="w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold text-text-main">Stop protocol?</h3>
+            <p className="text-sm text-text-soft">
+              Are you sure you want to stop this protocol? Your progress will be saved, but you’ll need to restart the run to continue later.
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowStopConfirm(false)}
-                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-white/10 transition"
+                className="flex-1 rounded-full border border-border-subtle px-4 py-2 text-sm text-text-main hover:bg-white/10"
               >
                 Cancel
               </button>
               <button
                 onClick={handleStopProtocol}
                 disabled={saving}
-                className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 transition disabled:opacity-50"
+                className="flex-1 rounded-full bg-danger px-4 py-2 text-sm font-semibold text-white hover:bg-danger/80 disabled:opacity-60"
               >
-                {saving ? "Stopping..." : "Stop protocol"}
+                {saving ? "Stopping…" : "Stop protocol"}
               </button>
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Day-by-Day Section */}
       {activeRun && (
-        <div id="day-content" className={pane + " p-6 space-y-6"}>
-          <h2 className="text-lg font-semibold">Day-by-day</h2>
+        <Card id="day-content" className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-text-main">Day-by-day</h2>
+            <div className="flex items-center gap-2">
+              <MetricPill label="Today" value={`Day ${currentDay}`} status="good" />
+              <MetricPill label="Completed" value={`${completedDays}/${totalDays}`} status="neutral" />
+            </div>
+          </div>
 
           {/* Day Selector */}
           <div className="flex items-center gap-2 overflow-x-auto pb-2">
@@ -397,13 +400,14 @@ export default function ProtocolDetailPage() {
                 <button
                   key={day}
                   onClick={() => setSelectedDay(day)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+                  className={cn(
+                    "rounded-full px-4 py-2 text-sm font-medium transition whitespace-nowrap border",
                     isSelected
-                      ? "bg-sky-400 text-white"
+                      ? "border-teal bg-teal-soft text-teal"
                       : isToday
-                      ? "bg-sky-400/20 text-sky-300 border border-sky-400/30"
-                      : "bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10"
-                  }`}
+                      ? "border-indigo bg-indigo-soft text-indigo"
+                      : "border-border-subtle text-text-soft hover:bg-white/10"
+                  )}
                 >
                   <div className="flex items-center gap-2">
                     {isCompleted ? (
@@ -422,22 +426,22 @@ export default function ProtocolDetailPage() {
           {currentDayData && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-xl font-semibold mb-2">
-                  Day {selectedDay} – {currentDayData.title}
+                <h3 className="text-xl font-semibold mb-2 text-text-main">
+                  Day {selectedDay} · {currentDayData.title}
                 </h3>
                 {currentDayData.summary && (
-                  <p className="text-sm text-slate-400 leading-relaxed">{currentDayData.summary}</p>
+                  <p className="text-sm text-text-soft leading-relaxed">{currentDayData.summary}</p>
                 )}
               </div>
 
-              {/* Today's Actions */}
+              {/* Today’s Actions */}
               {currentDayData.actions && currentDayData.actions.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium text-slate-300 mb-3">Today's actions</h4>
+                  <h4 className="text-sm font-medium text-text-main mb-3">Today’s actions</h4>
                   <ul className="space-y-2">
                     {currentDayData.actions.map((action, idx) => (
-                      <li key={idx} className="text-sm text-slate-200 flex items-start gap-2">
-                        <span className="text-sky-400 mt-1">•</span>
+                      <li key={idx} className="text-sm text-text-main flex items-start gap-2">
+                        <span className="text-teal mt-1">•</span>
                         <span>{action}</span>
                       </li>
                     ))}
@@ -447,26 +451,26 @@ export default function ProtocolDetailPage() {
 
               {/* Why this matters */}
               {currentDayData.education && (
-                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
-                  <h4 className="text-sm font-medium text-slate-300 mb-2">Why this matters</h4>
-                  <p className="text-sm text-slate-400 leading-relaxed">{currentDayData.education}</p>
+                <div className="rounded-2xl border border-border-subtle bg-white/5 p-4">
+                  <h4 className="text-sm font-medium text-text-main mb-2">Why this matters</h4>
+                  <p className="text-sm text-text-soft leading-relaxed">{currentDayData.education}</p>
                 </div>
               )}
 
               {/* Personal Notes */}
               <div>
-                <h4 className="text-sm font-medium text-slate-300 mb-2">Personal notes</h4>
+                <h4 className="text-sm font-medium text-text-main mb-2">Personal notes</h4>
                 <textarea
                   value={dayNotes}
                   onChange={(e) => setDayNotes(e.target.value)}
-                  placeholder="Add your notes about today's progress..."
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400/50 resize-none"
+                  placeholder="Add your notes about today’s progress..."
+                  className="w-full rounded-2xl border border-border-subtle bg-white/5 px-4 py-3 text-sm text-text-main placeholder:text-text-soft focus:outline-none focus:ring-2 focus:ring-teal/40 resize-none"
                   rows={4}
                 />
                 <button
                   onClick={() => handleSaveNotes(selectedDay)}
                   disabled={saving}
-                  className="mt-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-white/10 transition disabled:opacity-50"
+                  className="mt-2 rounded-full border border-border-subtle px-4 py-2 text-sm font-semibold text-text-main hover:bg-white/10 transition disabled:opacity-50"
                 >
                   {saving ? "Saving..." : "Save notes"}
                 </button>
@@ -475,17 +479,17 @@ export default function ProtocolDetailPage() {
               {/* Completion */}
               <div>
                 {isDayComplete ? (
-                  <div className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-4">
+                  <div className="rounded-2xl border border-success/40 bg-success/10 p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <CheckCircle2 className="size-5 text-emerald-400" />
-                      <span className="text-sm font-medium text-emerald-300">Day completed</span>
+                      <CheckCircle2 className="size-5 text-success" />
+                      <span className="text-sm font-medium text-success">Day completed</span>
                     </div>
                     <button
                       onClick={() => {
                         setDayNotes("");
                         handleSaveNotes(selectedDay);
                       }}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 transition"
+                      className="text-xs text-success hover:text-success/80 transition"
                     >
                       Edit notes
                     </button>
@@ -494,12 +498,12 @@ export default function ProtocolDetailPage() {
                   <button
                     onClick={() => handleMarkDayComplete(selectedDay)}
                     disabled={saving || selectedDay !== currentDay}
-                    className="w-full rounded-lg bg-emerald-400 px-4 py-3 text-white font-medium hover:bg-emerald-500 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="w-full rounded-full bg-teal px-4 py-3 text-body font-semibold hover:bg-teal/80 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {saving ? (
                       <>
                         <Loader2 className="size-4 animate-spin" />
-                        Saving...
+                        Saving…
                       </>
                     ) : (
                       <>
@@ -512,19 +516,21 @@ export default function ProtocolDetailPage() {
               </div>
 
               {/* Chat Integration */}
-              <div className="rounded-lg border border-sky-400/30 bg-sky-400/10 p-4">
+              <div className="rounded-2xl border border-indigo/40 bg-indigo-soft p-4">
                 <div className="flex items-start gap-3">
-                  <Sparkles className="size-5 text-sky-400 mt-0.5 flex-shrink-0" />
+                  <Sparkles className="size-5 text-indigo mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
-                    <h4 className="text-sm font-medium text-sky-300 mb-1">
-                      Want help adapting today's steps?
+                    <h4 className="text-sm font-medium text-indigo mb-1">
+                      Want help adapting today’s steps?
                     </h4>
-                    <p className="text-xs text-sky-400/80 mb-3">
+                    <p className="text-xs text-text-soft mb-3">
                       Ask the coach about adapting Day {selectedDay} to your schedule or challenges.
                     </p>
                     <Link
-                      href={`/chat?message=${encodeURIComponent(`Can you help me adapt Day ${selectedDay} of the ${protocol.name} protocol to my schedule?`)}`}
-                      className="inline-block rounded-lg bg-sky-400/20 border border-sky-400/30 px-4 py-2 text-sm font-medium text-sky-300 hover:bg-sky-400/30 transition"
+                      href={`/chat?message=${encodeURIComponent(
+                        `Can you help me adapt Day ${selectedDay} of the ${protocol.name} protocol to my schedule?`
+                      )}`}
+                      className="inline-block rounded-full border border-indigo px-4 py-2 text-sm font-semibold text-indigo hover:bg-indigo-soft transition"
                     >
                       Ask the coach about today →
                     </Link>
@@ -533,10 +539,8 @@ export default function ProtocolDetailPage() {
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
-
-      <SafetyDisclaimer variant="compact" />
     </div>
   );
 }

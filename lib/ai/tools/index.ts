@@ -1,10 +1,15 @@
 import { z } from "zod";
 
+export type ToolContext = {
+  userId: string;
+  requestId?: string;
+};
+
 export type ToolDef<I, O> = {
   name: string;
   description: string;
   input: z.ZodType<I>;
-  handler: (args: I) => Promise<O>;
+  handler: (args: I, context: ToolContext) => Promise<O>;
 };
 
 const registry: Record<string, ToolDef<any, any>> = {};
@@ -29,6 +34,61 @@ export function listTools() {
  */
 export function detectToolFromUserText(text: string): { name: string; args: unknown } | null {
   const t = text.toLowerCase();
+
+  // Experiment system triggers
+  const mentionsExperiment = /(experiment|self[-\s]?experiment|n\s*=\s*1|trial)/i.test(text);
+  if (mentionsExperiment) {
+    const wantsList = /(list|show|what|which|view|see).*(experiment|trial)/i.test(text);
+    if (wantsList) {
+      const includeCompleted = /(completed|finished|past|old|previous)/i.test(text);
+      const limit = /(all|everything|full)/i.test(text) ? 20 : 5;
+      const statusMatch = /(active|current|running|live)/i.test(text)
+        ? "active"
+        : /(draft|planned)/i.test(text)
+        ? "draft"
+        : undefined;
+      return {
+        name: "listExperiments",
+        args: {
+          includeCompleted,
+          limit,
+          status: statusMatch,
+        },
+      };
+    }
+
+    const wantsAnalysis = /(analy[sz]e|analysis|result|insight|verdict|compare|review).*(experiment|trial)/i.test(
+      text
+    );
+    if (wantsAnalysis) {
+      const experimentName = extractExperimentName(text);
+      if (!experimentName) {
+        return null;
+      }
+      return {
+        name: "analyzeExperiment",
+        args: {
+          experimentName,
+        },
+      };
+    }
+
+    const wantsCreation = /(create|design|build|start|run|launch|plan|set\s*up|spin\s*up|kick\s*off)/i.test(text);
+    if (wantsCreation) {
+      const experimentName = extractExperimentName(text) ?? deriveExperimentNameFallback(text);
+      const durationDays = inferExperimentDuration(text);
+      const metrics = inferExperimentMetrics(text);
+      return {
+        name: "createExperiment",
+        args: {
+          name: experimentName,
+          description: text.trim().slice(0, 500),
+          durationDays,
+          metrics,
+        },
+      };
+    }
+  }
 
   // mealPlanner triggers
   const mealTriggers = /(meal plan|mealplan|plan my meals|macros|calorie|calories|daily menu|nutrition plan)/i.test(t);
@@ -364,6 +424,110 @@ export function detectToolFromUserText(text: string): { name: string; args: unkn
     };
   }
 
+  // healthLogger triggers - log health data
+  const healthLogTriggers = /(log|record|track|enter|input|save).*(sleep|blood.*pressure|weight|heart.*rate|glucose|steps|mood|energy|hrv)/i.test(t) ||
+                            /(my|i).*(slept|weigh|blood.*pressure|heart.*rate|glucose|steps|walked).*(was|is|had|got|did)/i.test(t) ||
+                            /(\d+)\s*(hours.*sleep|steps|bpm|mg\/dl|kg|lbs|pounds)/i.test(t);
+
+  if (healthLogTriggers) {
+    // Parse various health metrics from the text
+    const data: Record<string, number | string | undefined> = {};
+    
+    // Sleep
+    const sleepMatch = /(\d+\.?\d*)\s*(hours?|hrs?)\s*(of\s*)?(sleep|slept)/i.exec(t) || 
+                       /(slept|sleep)\s*(?:for\s*)?(\d+\.?\d*)\s*(hours?|hrs?)/i.exec(t);
+    if (sleepMatch) {
+      const hours = parseFloat(sleepMatch[1] || sleepMatch[2]);
+      if (hours > 0 && hours <= 24) data.sleepHours = hours;
+    }
+    
+    // Sleep quality
+    const sleepQualityMatch = /sleep.*quality\s*(?:was|is|:)?\s*(\d{1,2})/i.exec(t) ||
+                              /(\d{1,2})\s*(?:out\s*of\s*10|\/10).*sleep/i.exec(t);
+    if (sleepQualityMatch) {
+      const quality = parseInt(sleepQualityMatch[1]);
+      if (quality >= 1 && quality <= 10) data.sleepQuality = quality;
+    }
+    
+    // Blood pressure
+    const bpMatch = /(\d{2,3})\s*[\/\\over]\s*(\d{2,3})/i.exec(t);
+    if (bpMatch) {
+      const systolic = parseInt(bpMatch[1]);
+      const diastolic = parseInt(bpMatch[2]);
+      if (systolic >= 70 && systolic <= 250 && diastolic >= 40 && diastolic <= 150) {
+        data.bloodPressureSystolic = systolic;
+        data.bloodPressureDiastolic = diastolic;
+      }
+    }
+    
+    // Weight
+    const weightMatch = /(\d{2,3}\.?\d*)\s*(kg|kilo|kilogram|lbs?|pounds?)/i.exec(t) ||
+                        /(weigh|weight)\s*(?:is|was|:)?\s*(\d{2,3}\.?\d*)/i.exec(t);
+    if (weightMatch) {
+      let weight = parseFloat(weightMatch[1] || weightMatch[2]);
+      if (/(lbs?|pounds?)/i.test(weightMatch[2] || "")) weight *= 0.453592;
+      if (weight >= 20 && weight <= 300) data.weight = Math.round(weight * 10) / 10;
+    }
+    
+    // Heart rate
+    const hrMatch = /(\d{2,3})\s*(bpm|beats)/i.exec(t) ||
+                    /(heart\s*rate|hr|resting.*hr)\s*(?:is|was|:)?\s*(\d{2,3})/i.exec(t);
+    if (hrMatch) {
+      const hr = parseInt(hrMatch[1] || hrMatch[2]);
+      if (hr >= 30 && hr <= 220) data.restingHeartRate = hr;
+    }
+    
+    // Blood glucose
+    const glucoseMatch = /(\d{2,3})\s*(mg\/dl|mgdl)/i.exec(t) ||
+                         /(glucose|blood\s*sugar)\s*(?:is|was|:)?\s*(\d{2,3})/i.exec(t);
+    if (glucoseMatch) {
+      const glucose = parseInt(glucoseMatch[1] || glucoseMatch[2]);
+      if (glucose >= 20 && glucose <= 600) data.bloodGlucose = glucose;
+    }
+    
+    // Steps
+    const stepsMatch = /(\d{3,6})\s*steps/i.exec(t) ||
+                       /(walked|steps)\s*(?:was|were|:)?\s*(\d{3,6})/i.exec(t);
+    if (stepsMatch) {
+      const steps = parseInt(stepsMatch[1] || stepsMatch[2]);
+      if (steps >= 0 && steps <= 100000) data.steps = steps;
+    }
+    
+    // Energy level
+    const energyMatch = /energy\s*(?:level|:)?\s*(?:is|was)?\s*(\d{1,2})/i.exec(t) ||
+                        /(\d{1,2})\s*(?:out\s*of\s*10|\/10).*energy/i.exec(t);
+    if (energyMatch) {
+      const energy = parseInt(energyMatch[1]);
+      if (energy >= 1 && energy <= 10) data.energyLevel = energy;
+    }
+    
+    // Mood
+    const moodMatch = /mood\s*(?:is|was|:)?\s*(\d{1,2})/i.exec(t) ||
+                      /(\d{1,2})\s*(?:out\s*of\s*10|\/10).*mood/i.exec(t);
+    if (moodMatch) {
+      const mood = parseInt(moodMatch[1]);
+      if (mood >= 1 && mood <= 10) data.moodScore = mood;
+    }
+    
+    // Water/hydration
+    const waterMatch = /(\d{3,4})\s*(ml|milliliter|liter|L)\s*(of\s*)?(water)?/i.exec(t) ||
+                       /(drank|water)\s*(\d{1,2})\s*(glasses|cups|liters?|L)/i.exec(t);
+    if (waterMatch) {
+      let ml = parseInt(waterMatch[1] || waterMatch[2]);
+      if (/(glasses?|cups?)/i.test(waterMatch[3] || "")) ml *= 250;
+      if (/(liters?|L)/i.test(waterMatch[2] || waterMatch[3] || "")) ml *= 1000;
+      if (ml >= 0 && ml <= 10000) data.waterMl = ml;
+    }
+
+    // Only trigger if we found any data to log
+    if (Object.keys(data).length > 0) {
+      return {
+        name: "logHealthData",
+        args: data,
+      };
+    }
+  }
+
   // protocolBuilder triggers (comprehensive protocol generation)
   const protocolTriggers = /(protocol|plan|program|routine|schedule).*(for|to|optimize|achieve|longevity|performance|weight|muscle|energy|stress|cognitive)/i.test(t) ||
                           /(create|build|generate|make).*(protocol|plan|program|routine|schedule)/i.test(t) ||
@@ -420,4 +584,92 @@ export function detectToolFromUserText(text: string): { name: string; args: unkn
   }
 
   return null;
+}
+
+function extractExperimentName(source: string): string | null {
+  const named = source.match(/(?:called|named)\s+["'“]?([^"”'\n]+)["'”]?/i);
+  if (named) {
+    const formatted = formatExperimentName(named[1]);
+    if (formatted) return formatted;
+  }
+
+  const before = source.match(
+    /(?:create|design|build|start|launch|plan|run|set\s*up|spin\s*up|kick\s*off)\s+(?:a|an|the)?\s+([^.,\n]+?)\s+(?:experiment|trial)/i
+  );
+  if (before) {
+    const formatted = formatExperimentName(before[1]);
+    if (formatted) return formatted;
+  }
+
+  const after = source.match(/(?:experiment|trial)\s+(?:for|to)\s+([^.,\n]+)/i);
+  if (after) {
+    const formatted = formatExperimentName(after[1]);
+    if (formatted) return formatted;
+  }
+
+  return null;
+}
+
+function deriveExperimentNameFallback(source: string): string {
+  if (/caffeine|coffee/i.test(source)) return "Caffeine Curfew Experiment";
+  if (/sleep|insomnia|circadian/i.test(source)) return "Sleep Optimization Experiment";
+  if (/stress|anxiety|calm/i.test(source)) return "Stress Reset Experiment";
+  if (/sauna|cold|ice|plunge|heat/i.test(source)) return "Thermal Stress Experiment";
+  if (/fast|glucose|metabolic|blood sugar/i.test(source)) return "Metabolic Reset Experiment";
+  if (/focus|deep work|productivity/i.test(source)) return "Focus Sprint Experiment";
+  return "Custom Experiment";
+}
+
+function formatExperimentName(raw: string): string | null {
+  const cleaned = raw.replace(/[^a-z0-9\s-]/gi, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ")
+    .slice(0, 80);
+}
+
+function inferExperimentDuration(source: string): number {
+  const match = source.match(/(\d{1,3})\s*(day|days|week|weeks)/i);
+  if (!match) return 14;
+  let days = Number(match[1]);
+  if (/week/i.test(match[2])) {
+    days *= 7;
+  }
+  return Math.max(5, Math.min(days, 180));
+}
+
+function inferExperimentMetrics(source: string): string[] {
+  const metrics = new Set<string>();
+  if (/sleep|insomnia|circadian/i.test(source)) {
+    metrics.add("sleep_duration_hours");
+    metrics.add("sleep_quality");
+  }
+  if (/energy|fatigue|tired/i.test(source)) {
+    metrics.add("energy");
+  }
+  if (/mood|anxiety|stress/i.test(source)) {
+    metrics.add("mood");
+  }
+  if (/hrv|readiness|recovery/i.test(source)) {
+    metrics.add("hrv_rmssd");
+  }
+  if (/resting\s?hr|heart\s?rate/i.test(source)) {
+    metrics.add("resting_hr");
+  }
+  if (/steps|walk|movement|activity/i.test(source)) {
+    metrics.add("steps");
+  }
+  if (/strain|training load|workout/i.test(source)) {
+    metrics.add("strain_load");
+  }
+
+  if (metrics.size === 0) {
+    metrics.add("mood");
+    metrics.add("energy");
+  }
+
+  return Array.from(metrics);
 }

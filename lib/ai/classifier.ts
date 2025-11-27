@@ -96,6 +96,121 @@ allow_answer:
 
 let openaiClient: OpenAI | null = null;
 
+/**
+ * Build a full classification object with safe defaults.
+ */
+function buildClassification(
+  overrides: Partial<RequestClassification> = {}
+): RequestClassification {
+  return {
+    topic: (overrides.topic as Topic) || "general",
+    complexity: overrides.complexity || "low",
+    risk: overrides.risk || "low",
+    needs_rag: overrides.needs_rag ?? false,
+    needs_wearables: overrides.needs_wearables ?? false,
+    allow_answer: overrides.allow_answer ?? true,
+  };
+}
+
+/**
+ * Deterministic keyword-based classification for critical cases.
+ * Ensures we never miss obvious crisis/emergency content if the LLM call fails.
+ */
+export function detectDeterministicClassification(
+  userMessage: string
+): RequestClassification | null {
+  const text = userMessage.toLowerCase();
+
+  const crisisPatterns = [
+    "kill myself",
+    "kill myself.",
+    "suicide",
+    "end my life",
+    "want to die",
+    "wish i was dead",
+    "hurt myself",
+    "self harm",
+    "harm myself",
+    "hurt someone",
+    "voices telling me",
+  ];
+
+  if (crisisPatterns.some((pattern) => text.includes(pattern))) {
+    return buildClassification({
+      topic: "emotional_crisis",
+      complexity: "high",
+      risk: "high",
+      allow_answer: false,
+    });
+  }
+
+  const emergencyPatterns = [
+    "chest pain",
+    "face drooping",
+    "stroke",
+    "can't breathe",
+    "cannot breathe",
+    "trouble breathing",
+    "shortness of breath",
+    "severe allergic",
+    "throat is swelling",
+    "heart attack",
+  ];
+
+  if (emergencyPatterns.some((pattern) => text.includes(pattern))) {
+    return buildClassification({
+      topic: "medical_acute",
+      complexity: "high",
+      risk: "high",
+      allow_answer: false,
+    });
+  }
+
+  const extremeBiohackPatterns = [
+    "7-day fast",
+    "7 day fast",
+    "dry fast",
+    "dry fasting",
+    "water fast for a week",
+    "water-only fast",
+    "multi-day fast",
+    "stacking extreme stressors",
+    "sauna endurance",
+  ];
+
+  if (extremeBiohackPatterns.some((pattern) => text.includes(pattern))) {
+    return buildClassification({
+      topic: "fasting",
+      complexity: "high",
+      risk: "high",
+      allow_answer: false,
+      needs_rag: false,
+    });
+  }
+
+  const moderateBiohackPatterns = [
+    "3-day fast",
+    "3 day fast",
+    "three day fast",
+    "extended fast",
+    "prolonged fast",
+    "ice bath protocol",
+    "sauna protocol",
+  ];
+
+  if (moderateBiohackPatterns.some((pattern) => text.includes(pattern))) {
+    return buildClassification({
+      topic: "fasting",
+      complexity: "medium",
+      risk: "medium",
+      allow_answer: true,
+      needs_rag: true,
+    });
+  }
+
+  return null;
+}
+
 function getOpenAIClient(): OpenAI {
   if (!openaiClient) {
     const apiKey = env.openai.apiKey();
@@ -116,6 +231,11 @@ export async function classifyRequest(
   const client = getOpenAIClient();
   const model = env.openai.cheapModel();
 
+  const deterministic = detectDeterministicClassification(userMessage);
+  if (deterministic) {
+    return deterministic;
+  }
+
   try {
     const completion = await client.chat.completions.create({
       model,
@@ -127,7 +247,7 @@ export async function classifyRequest(
         },
       ],
       temperature: 0.1, // Low temperature for consistent classification
-      max_tokens: 200,
+      max_completion_tokens: 200,
       response_format: { type: "json_object" },
     });
 
@@ -139,14 +259,7 @@ export async function classifyRequest(
     const parsed = JSON.parse(content) as Partial<RequestClassification>;
 
     // Validate and provide safe defaults
-    const classification: RequestClassification = {
-      topic: (parsed.topic as Topic) || "general",
-      complexity: parsed.complexity || "low",
-      risk: parsed.risk || "low",
-      needs_rag: parsed.needs_rag ?? false,
-      needs_wearables: parsed.needs_wearables ?? false,
-      allow_answer: parsed.allow_answer ?? true,
-    };
+    const classification = buildClassification(parsed);
 
     // Safety override: if topic is crisis/acute, force allow_answer = false
     if (
@@ -162,14 +275,12 @@ export async function classifyRequest(
     logger.error("Classification failed", { error, userMessage: userMessage.substring(0, 100) });
     
     // Return safe defaults on error
-    return {
-      topic: "general",
-      complexity: "low",
-      risk: "low",
-      needs_rag: false,
-      needs_wearables: false,
-      allow_answer: true,
-    };
+    const fallback = detectDeterministicClassification(userMessage);
+    if (fallback) {
+      return fallback;
+    }
+
+    return buildClassification();
   }
 }
 

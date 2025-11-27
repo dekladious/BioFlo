@@ -60,7 +60,7 @@ export const sleepOptimizer = registerTool({
     }).optional(),
     goals: z.array(z.enum(["better_sleep", "energy", "performance", "recovery"])).default(["better_sleep"]),
   }),
-  async handler({ currentSleepSchedule, workSchedule, lightExposure: lightExposureInput, goals }) {
+  async handler({ currentSleepSchedule, workSchedule, lightExposure: lightExposureInput, goals }, _context) {
     // Parse current schedule
     const currentBedtime = currentSleepSchedule?.bedtime || "22:30";
     const currentWakeTime = currentSleepSchedule?.wakeTime || "06:30";

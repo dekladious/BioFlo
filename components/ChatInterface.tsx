@@ -843,7 +843,7 @@ export default function ChatInterface() {
         <div className="text-sm text-slate-300">
           <div className="font-medium">Tools</div>
           <p className="text-slate-400 text-xs mt-1">
-            When the agent triggers a tool (e.g., meal planner), we'll show inputs/outputs here.
+            When the agent triggers a tool (e.g., meal planner), we’ll show inputs/outputs here.
           </p>
         </div>
       </aside>

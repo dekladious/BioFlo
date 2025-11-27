@@ -77,7 +77,7 @@ export const protocolBuilder = registerTool({
     }).optional(),
     duration: z.enum(["1_week", "2_weeks", "4_weeks", "8_weeks", "12_weeks"]).default("4_weeks"),
   }),
-  async handler({ goals, currentState, preferences, duration }) {
+  async handler({ goals, currentState, preferences, duration }, _context) {
     const durationWeeks = {
       "1_week": 1,
       "2_weeks": 2,
